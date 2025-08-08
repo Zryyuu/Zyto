@@ -31,6 +31,9 @@ dependencies:
   flutter:
     sdk: flutter
   shared_preferences: ^2.2.2
+  flutter_local_notifications: ^17.2.2  # tambahkan ini
+  timezone: ^0.9.4  # tambahkan ini juga untuk timezone support
+
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
