@@ -31,22 +31,56 @@ class MyApp extends StatelessWidget {
   }
 }
 
+class TodoSubtask {
+  String task;
+  bool isCompleted;
+
+  TodoSubtask({
+    required this.task,
+    this.isCompleted = false,
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'task': task,
+      'isCompleted': isCompleted,
+    };
+  }
+
+  factory TodoSubtask.fromJson(Map<String, dynamic> json) {
+    return TodoSubtask(
+      task: json['task'],
+      isCompleted: json['isCompleted'],
+    );
+  }
+}
+
 class TodoItem {
   String task;
   bool isCompleted;
   DateTime createdAt;
+  String notes;
+  List<TodoSubtask> subtasks;
+  bool isExpanded;
 
   TodoItem({
     required this.task,
     this.isCompleted = false,
     DateTime? createdAt,
-  }) : createdAt = createdAt ?? DateTime.now();
+    this.notes = '',
+    List<TodoSubtask>? subtasks,
+    this.isExpanded = false,
+  }) : createdAt = createdAt ?? DateTime.now(),
+       subtasks = subtasks ?? [];
 
   Map<String, dynamic> toJson() {
     return {
       'task': task,
       'isCompleted': isCompleted,
       'createdAt': createdAt.toIso8601String(),
+      'notes': notes,
+      'subtasks': subtasks.map((subtask) => subtask.toJson()).toList(),
+      'isExpanded': isExpanded,
     };
   }
 
@@ -55,8 +89,17 @@ class TodoItem {
       task: json['task'],
       isCompleted: json['isCompleted'],
       createdAt: DateTime.parse(json['createdAt']),
+      notes: json['notes'] ?? '',
+      subtasks: (json['subtasks'] as List<dynamic>?)
+          ?.map((subtaskJson) => TodoSubtask.fromJson(subtaskJson))
+          .toList() ?? [],
+      isExpanded: json['isExpanded'] ?? false,
     );
   }
+
+  int get completedSubtasks => subtasks.where((s) => s.isCompleted).length;
+  int get totalSubtasks => subtasks.length;
+  bool get allSubtasksCompleted => subtasks.isNotEmpty && completedSubtasks == totalSubtasks;
 }
 
 class TodoListScreen extends StatefulWidget {
@@ -146,6 +189,60 @@ class _TodoListScreenState extends State<TodoListScreen>
   void _toggleTodoItem(int index) {
     setState(() {
       _todoItems[index].isCompleted = !_todoItems[index].isCompleted;
+      // Jika main task selesai, tandai semua subtask sebagai selesai
+      if (_todoItems[index].isCompleted) {
+        for (var subtask in _todoItems[index].subtasks) {
+          subtask.isCompleted = true;
+        }
+      }
+    });
+    _saveTodoItems();
+  }
+
+  void _toggleSubtask(int todoIndex, int subtaskIndex) {
+    setState(() {
+      _todoItems[todoIndex].subtasks[subtaskIndex].isCompleted = 
+          !_todoItems[todoIndex].subtasks[subtaskIndex].isCompleted;
+      
+      // Check if all subtasks are completed to auto-complete main task
+      if (_todoItems[todoIndex].allSubtasksCompleted) {
+        _todoItems[todoIndex].isCompleted = true;
+      } else if (_todoItems[todoIndex].isCompleted) {
+        // If main task was completed but a subtask is unchecked, uncheck main task
+        _todoItems[todoIndex].isCompleted = false;
+      }
+    });
+    _saveTodoItems();
+  }
+
+  void _addSubtask(int todoIndex, String subtaskText) {
+    if (subtaskText.trim().isNotEmpty) {
+      setState(() {
+        _todoItems[todoIndex].subtasks.add(
+          TodoSubtask(task: subtaskText.trim())
+        );
+      });
+      _saveTodoItems();
+    }
+  }
+
+  void _removeSubtask(int todoIndex, int subtaskIndex) {
+    setState(() {
+      _todoItems[todoIndex].subtasks.removeAt(subtaskIndex);
+    });
+    _saveTodoItems();
+  }
+
+  void _updateNotes(int index, String notes) {
+    setState(() {
+      _todoItems[index].notes = notes;
+    });
+    _saveTodoItems();
+  }
+
+  void _toggleExpanded(int index) {
+    setState(() {
+      _todoItems[index].isExpanded = !_todoItems[index].isExpanded;
     });
     _saveTodoItems();
   }
@@ -191,6 +288,140 @@ class _TodoListScreenState extends State<TodoListScreen>
               child: const Text('Tambah'),
             ),
           ],
+        );
+      },
+    );
+  }
+
+  void _showDetailDialog(TodoItem todoItem, int index) {
+    final TextEditingController notesController = TextEditingController(text: todoItem.notes);
+    final TextEditingController subtaskController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+              title: Text(
+                todoItem.task,
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              content: SizedBox(
+                width: double.maxFinite,
+                height: 400,
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Notes Section
+                      const Text('Catatan:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: notesController,
+                        decoration: const InputDecoration(
+                          hintText: 'Tambahkan catatan...',
+                          border: OutlineInputBorder(),
+                        ),
+                        maxLines: 3,
+                        onChanged: (value) => _updateNotes(index, value),
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      // Subtasks Section
+                      Row(
+                        children: [
+                          const Text('Subtask:', style: TextStyle(fontWeight: FontWeight.bold)),
+                          const Spacer(),
+                          Text('${todoItem.completedSubtasks}/${todoItem.totalSubtasks}'),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      
+                      // Add subtask field
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: subtaskController,
+                              decoration: const InputDecoration(
+                                hintText: 'Tambah subtask...',
+                                border: OutlineInputBorder(),
+                              ),
+                              onSubmitted: (value) {
+                                _addSubtask(index, value);
+                                subtaskController.clear();
+                                setDialogState(() {});
+                              },
+                            ),
+                          ),
+                          IconButton(
+                            onPressed: () {
+                              _addSubtask(index, subtaskController.text);
+                              subtaskController.clear();
+                              setDialogState(() {});
+                            },
+                            icon: const Icon(Icons.add),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      
+                      // Subtasks list
+                      Container(
+                        constraints: const BoxConstraints(maxHeight: 200),
+                        child: ListView.builder(
+                          shrinkWrap: true,
+                          itemCount: todoItem.subtasks.length,
+                          itemBuilder: (context, subtaskIndex) {
+                            final subtask = todoItem.subtasks[subtaskIndex];
+                            return ListTile(
+                              dense: true,
+                              leading: Checkbox(
+                                value: subtask.isCompleted,
+                                onChanged: (value) {
+                                  _toggleSubtask(index, subtaskIndex);
+                                  setDialogState(() {});
+                                },
+                              ),
+                              title: Text(
+                                subtask.task,
+                                style: TextStyle(
+                                  decoration: subtask.isCompleted 
+                                      ? TextDecoration.lineThrough 
+                                      : TextDecoration.none,
+                                  color: subtask.isCompleted 
+                                      ? Colors.grey[600] 
+                                      : Colors.black87,
+                                ),
+                              ),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.delete_outline, size: 20),
+                                onPressed: () {
+                                  _removeSubtask(index, subtaskIndex);
+                                  setDialogState(() {});
+                                },
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Tutup'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -257,10 +488,11 @@ class _TodoListScreenState extends State<TodoListScreen>
         ),
       ),
       onDismissed: (direction) {
+        final removedItem = todoItem;
         _removeTodoItem(index);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Tugas "${todoItem.task}" dihapus'),
+            content: Text('Tugas "${removedItem.task}" dihapus'),
             duration: const Duration(seconds: 2),
           ),
         );
@@ -271,44 +503,149 @@ class _TodoListScreenState extends State<TodoListScreen>
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
         ),
-        child: ListTile(
-          contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          leading: Transform.scale(
-            scale: 1.2,
-            child: Checkbox(
-              value: todoItem.isCompleted,
-              onChanged: (value) => _toggleTodoItem(index),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(4),
+        child: Column(
+          children: [
+            ListTile(
+              contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              leading: Transform.scale(
+                scale: 1.2,
+                child: Checkbox(
+                  value: todoItem.isCompleted,
+                  onChanged: (value) => _toggleTodoItem(index),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(4),
+                  ),
+                ),
+              ),
+              title: Text(
+                todoItem.task,
+                style: TextStyle(
+                  fontSize: 16,
+                  decoration: todoItem.isCompleted 
+                      ? TextDecoration.lineThrough 
+                      : TextDecoration.none,
+                  color: todoItem.isCompleted 
+                      ? Colors.grey[600] 
+                      : Colors.black87,
+                  fontWeight: todoItem.isCompleted 
+                      ? FontWeight.normal 
+                      : FontWeight.w500,
+                ),
+              ),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Dibuat: ${_formatDate(todoItem.createdAt)}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                  if (todoItem.totalSubtasks > 0)
+                    Text(
+                      'Subtask: ${todoItem.completedSubtasks}/${todoItem.totalSubtasks}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: todoItem.allSubtasksCompleted ? Colors.green : Colors.orange,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  if (todoItem.notes.isNotEmpty)
+                    Text(
+                      '📝 ${todoItem.notes.length > 30 ? '${todoItem.notes.substring(0, 30)}...' : todoItem.notes}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.blue[600],
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                ],
+              ),
+              trailing: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (todoItem.subtasks.isNotEmpty || todoItem.notes.isNotEmpty)
+                    IconButton(
+                      icon: Icon(
+                        todoItem.isExpanded ? Icons.expand_less : Icons.expand_more,
+                        color: Colors.blue,
+                      ),
+                      onPressed: () => _toggleExpanded(index),
+                    ),
+                  IconButton(
+                    icon: const Icon(Icons.edit_outlined, color: Colors.blue),
+                    onPressed: () => _showDetailDialog(todoItem, index),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Colors.red),
+                    onPressed: () => _removeTodoItem(index),
+                  ),
+                ],
               ),
             ),
-          ),
-          title: Text(
-            todoItem.task,
-            style: TextStyle(
-              fontSize: 16,
-              decoration: todoItem.isCompleted 
-                  ? TextDecoration.lineThrough 
-                  : TextDecoration.none,
-              color: todoItem.isCompleted 
-                  ? Colors.grey[600] 
-                  : Colors.black87,
-              fontWeight: todoItem.isCompleted 
-                  ? FontWeight.normal 
-                  : FontWeight.w500,
-            ),
-          ),
-          subtitle: Text(
-            'Dibuat: ${_formatDate(todoItem.createdAt)}',
-            style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey[600],
-            ),
-          ),
-          trailing: IconButton(
-            icon: const Icon(Icons.delete_outline, color: Colors.red),
-            onPressed: () => _removeTodoItem(index),
-          ),
+            
+            // Expanded content
+            if (todoItem.isExpanded && (todoItem.subtasks.isNotEmpty || todoItem.notes.isNotEmpty))
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  borderRadius: const BorderRadius.only(
+                    bottomLeft: Radius.circular(12),
+                    bottomRight: Radius.circular(12),
+                  ),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (todoItem.notes.isNotEmpty) ...[
+                      const Text('Catatan:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 4),
+                      Text(todoItem.notes, style: const TextStyle(fontSize: 14)),
+                      const SizedBox(height: 12),
+                    ],
+                    if (todoItem.subtasks.isNotEmpty) ...[
+                      const Text('Subtask:', style: TextStyle(fontWeight: FontWeight.bold)),
+                      const SizedBox(height: 8),
+                      ...todoItem.subtasks.asMap().entries.map((entry) {
+                        int subtaskIndex = entry.key;
+                        TodoSubtask subtask = entry.value;
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Row(
+                            children: [
+                              Transform.scale(
+                                scale: 0.9,
+                                child: Checkbox(
+                                  value: subtask.isCompleted,
+                                  onChanged: (value) => _toggleSubtask(index, subtaskIndex),
+                                ),
+                              ),
+                              Expanded(
+                                child: Text(
+                                  subtask.task,
+                                  style: TextStyle(
+                                    decoration: subtask.isCompleted 
+                                        ? TextDecoration.lineThrough 
+                                        : TextDecoration.none,
+                                    color: subtask.isCompleted 
+                                        ? Colors.grey[600] 
+                                        : Colors.black87,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      }),
+                    ],
+                  ],
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -393,9 +730,9 @@ class _TodoListScreenState extends State<TodoListScreen>
               ),
               child: Column(
                 children: [
-                  Text(
+                  const Text(
                     'Progress Tugas',
-                    style: const TextStyle(
+                    style: TextStyle(
                       color: Colors.white,
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
