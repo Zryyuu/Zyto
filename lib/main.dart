@@ -361,21 +361,7 @@ class _TodoListScreenState extends State<TodoListScreen>
     });
     _saveTodoItems();
   }
-
-  void _updatePriority(int index, String priority) {
-    setState(() {
-      _todoItems[index].priority = priority;
-    });
-    _saveTodoItems();
-  }
-
-  void _updateDays(int index, List<String> days) {
-    setState(() {
-      _todoItems[index].days = days;
-    });
-    _saveTodoItems();
-  }
-
+  
   void _toggleExpanded(int index) {
     setState(() {
       _todoItems[index].isExpanded = !_todoItems[index].isExpanded;
