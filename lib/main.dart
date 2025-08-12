@@ -33,7 +33,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'To-Do List App',
+      title: 'Multi Task & Budget App',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         primarySwatch: Colors.indigo,
@@ -47,11 +47,97 @@ class MyApp extends StatelessWidget {
           centerTitle: true,
         ),
       ),
-      home: const TodoListScreen(),
+      home: const MainScreen(),
     );
   }
 }
 
+// Budget Models
+class BudgetCategory {
+  String name;
+  double budget;
+  double spent;
+  IconData icon;
+  Color color;
+
+  BudgetCategory({
+    required this.name,
+    required this.budget,
+    this.spent = 0.0,
+    this.icon = Icons.category,
+    this.color = Colors.blue,
+  });
+
+  double get remaining => budget - spent;
+  double get percentage => budget > 0 ? (spent / budget) * 100 : 0;
+  bool get isOverBudget => spent > budget;
+
+  Map<String, dynamic> toJson() {
+    return {
+      'name': name,
+      'budget': budget,
+      'spent': spent,
+      'icon': icon.codePoint,
+      'color': color.toARGB32(),
+    };
+  }
+
+  factory BudgetCategory.fromJson(Map<String, dynamic> json) {
+    return BudgetCategory(
+      name: json['name'],
+      budget: json['budget'].toDouble(),
+      spent: json['spent'].toDouble(),
+      icon: IconData(json['icon'], fontFamily: 'MaterialIcons'),
+      color: Color(json['color']),
+    );
+  }
+}
+
+class Transaction {
+  String id;
+  String title;
+  double amount;
+  String category;
+  DateTime date;
+  bool isIncome;
+  String notes;
+
+  Transaction({
+    required this.id,
+    required this.title,
+    required this.amount,
+    required this.category,
+    required this.date,
+    this.isIncome = false,
+    this.notes = '',
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'title': title,
+      'amount': amount,
+      'category': category,
+      'date': date.toIso8601String(),
+      'isIncome': isIncome,
+      'notes': notes,
+    };
+  }
+
+  factory Transaction.fromJson(Map<String, dynamic> json) {
+    return Transaction(
+      id: json['id'],
+      title: json['title'],
+      amount: json['amount'].toDouble(),
+      category: json['category'],
+      date: DateTime.parse(json['date']),
+      isIncome: json['isIncome'],
+      notes: json['notes'] ?? '',
+    );
+  }
+}
+
+// Todo Models (existing)
 class TodoSubtask {
   String task;
   bool isCompleted;
@@ -116,8 +202,8 @@ class TodoItem {
   String notes;
   List<TodoSubtask> subtasks;
   bool isExpanded;
-  String priority; // Rendah, Sedang, Tinggi
-  List<String> days; // Hari-hari dalam seminggu
+  String priority;
+  List<String> days;
 
   TodoItem({
     required this.task,
@@ -183,6 +269,1097 @@ class TodoItem {
   }
 }
 
+// Main Screen with TabBar
+class MainScreen extends StatefulWidget {
+  const MainScreen({super.key});
+
+  @override
+  State<MainScreen> createState() => _MainScreenState();
+}
+
+class _MainScreenState extends State<MainScreen> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.grey[50],
+      appBar: AppBar(
+        title: const Text(
+          'Task & Budget Manager',
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [
+            Tab(
+              icon: Icon(Icons.task_alt),
+              text: 'Tugas',
+            ),
+            Tab(
+              icon: Icon(Icons.account_balance_wallet),
+              text: 'Keuangan',
+            ),
+          ],
+          labelColor: Theme.of(context).primaryColor,
+          unselectedLabelColor: Colors.grey[600],
+          indicatorColor: Theme.of(context).primaryColor,
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: const [
+          TodoListScreen(),
+          BudgetScreen(),
+        ],
+      ),
+    );
+  }
+}
+
+// Budget Screen
+class BudgetScreen extends StatefulWidget {
+  const BudgetScreen({super.key});
+
+  @override
+  State<BudgetScreen> createState() => _BudgetScreenState();
+}
+
+class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMixin {
+  final List<BudgetCategory> _categories = [];
+  final List<Transaction> _transactions = [];
+  late AnimationController _fabAnimationController;
+  bool _isLoading = true;
+  int _selectedIndex = 0; // 0: Overview, 1: Categories, 2: Transactions
+
+  @override
+  void initState() {
+    super.initState();
+    _fabAnimationController = AnimationController(
+      duration: const Duration(milliseconds: 300),
+      vsync: this,
+    );
+    _loadBudgetData();
+    _initializeDefaultCategories();
+  }
+
+  @override
+  void dispose() {
+    _fabAnimationController.dispose();
+    super.dispose();
+  }
+
+  void _initializeDefaultCategories() {
+    if (_categories.isEmpty) {
+      _categories.addAll([
+        BudgetCategory(name: 'Makanan', budget: 1000000, icon: Icons.restaurant, color: Colors.orange),
+        BudgetCategory(name: 'Transportasi', budget: 500000, icon: Icons.directions_car, color: Colors.blue),
+        BudgetCategory(name: 'Hiburan', budget: 300000, icon: Icons.movie, color: Colors.purple),
+        BudgetCategory(name: 'Belanja', budget: 800000, icon: Icons.shopping_cart, color: Colors.green),
+        BudgetCategory(name: 'Tagihan', budget: 1200000, icon: Icons.receipt, color: Colors.red),
+      ]);
+      _saveBudgetData();
+    }
+  }
+
+  Future<void> _loadBudgetData() async {
+    try {
+      SharedPreferences prefs = await SharedPreferences.getInstance();
+      
+      // Load categories
+      List<String>? categoryStrings = prefs.getStringList('budget_categories');
+      if (categoryStrings != null) {
+        _categories.clear();
+        for (String categoryString in categoryStrings) {
+          Map<String, dynamic> categoryMap = json.decode(categoryString);
+          _categories.add(BudgetCategory.fromJson(categoryMap));
+        }
+      }
+      
+      // Load transactions
+      List<String>? transactionStrings = prefs.getStringList('budget_transactions');
+      if (transactionStrings != null) {
+        _transactions.clear();
+        for (String transactionString in transactionStrings) {
+          Map<String, dynamic> transactionMap = json.decode(transactionString);
+          _transactions.add(Transaction.fromJson(transactionMap));
+        }
+      }
+      
+      setState(() {
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _saveBudgetData() async {
+    SharedPreferences prefs = await SharedPreferences.getInstance();
+    
+    // Save categories
+    List<String> categoryStrings = _categories
+        .map((category) => json.encode(category.toJson()))
+        .toList();
+    await prefs.setStringList('budget_categories', categoryStrings);
+    
+    // Save transactions
+    List<String> transactionStrings = _transactions
+        .map((transaction) => json.encode(transaction.toJson()))
+        .toList();
+    await prefs.setStringList('budget_transactions', transactionStrings);
+  }
+
+  void _addTransaction(Transaction transaction) {
+    setState(() {
+      _transactions.add(transaction);
+      
+      // Update category spending
+      if (!transaction.isIncome) {
+        for (var category in _categories) {
+          if (category.name == transaction.category) {
+            category.spent += transaction.amount;
+            break;
+          }
+        }
+      }
+    });
+    _saveBudgetData();
+  }
+
+  void _removeTransaction(int index) {
+    final transaction = _transactions[index];
+    setState(() {
+      _transactions.removeAt(index);
+      
+      // Update category spending
+      if (!transaction.isIncome) {
+        for (var category in _categories) {
+          if (category.name == transaction.category) {
+            category.spent -= transaction.amount;
+            if (category.spent < 0) category.spent = 0;
+            break;
+          }
+        }
+      }
+    });
+    _saveBudgetData();
+  }
+
+  void _addCategory(BudgetCategory category) {
+    setState(() {
+      _categories.add(category);
+    });
+    _saveBudgetData();
+  }
+
+  void _removeCategory(int index) {
+    setState(() {
+      _categories.removeAt(index);
+    });
+    _saveBudgetData();
+  }
+
+  double get totalBudget => _categories.fold(0, (sum, cat) => sum + cat.budget);
+  double get totalSpent => _categories.fold(0, (sum, cat) => sum + cat.spent);
+  double get totalIncome => _transactions
+      .where((t) => t.isIncome)
+      .fold(0, (sum, t) => sum + t.amount);
+  double get totalExpense => _transactions
+      .where((t) => !t.isIncome)
+      .fold(0, (sum, t) => sum + t.amount);
+  double get balance => totalIncome - totalExpense;
+
+  void _showAddTransactionDialog() {
+    final TextEditingController titleController = TextEditingController();
+    final TextEditingController amountController = TextEditingController();
+    final TextEditingController notesController = TextEditingController();
+    String selectedCategory = _categories.isNotEmpty ? _categories.first.name : '';
+    bool isIncome = false;
+    DateTime selectedDate = DateTime.now();
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Text('Tambah Transaksi'),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // Income/Expense Toggle
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FilterChip(
+                              label: const Text('Pengeluaran'),
+                              selected: !isIncome,
+                              onSelected: (selected) {
+                                setDialogState(() {
+                                  isIncome = !selected;
+                                });
+                              },
+                              selectedColor: Colors.red.withValues(alpha: 0.3),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: FilterChip(
+                              label: const Text('Pemasukan'),
+                              selected: isIncome,
+                              onSelected: (selected) {
+                                setDialogState(() {
+                                  isIncome = selected;
+                                });
+                              },
+                              selectedColor: Colors.green.withValues(alpha: 0.3),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      // Title
+                      TextField(
+                        controller: titleController,
+                        decoration: const InputDecoration(
+                          labelText: 'Judul Transaksi',
+                          border: OutlineInputBorder(),
+                        ),
+                        autofocus: true,
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      // Amount
+                      TextField(
+                        controller: amountController,
+                        decoration: const InputDecoration(
+                          labelText: 'Jumlah',
+                          prefixText: 'Rp ',
+                          border: OutlineInputBorder(),
+                        ),
+                        keyboardType: TextInputType.number,
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      // Category (only for expenses)
+                      if (!isIncome && _categories.isNotEmpty)
+                        DropdownButtonFormField<String>(
+                          value: selectedCategory,
+                          decoration: const InputDecoration(
+                            labelText: 'Kategori',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: _categories.map((category) {
+                            return DropdownMenuItem(
+                              value: category.name,
+                              child: Row(
+                                children: [
+                                  Icon(category.icon, color: category.color, size: 20),
+                                  const SizedBox(width: 8),
+                                  Text(category.name),
+                                ],
+                              ),
+                            );
+                          }).toList(),
+                          onChanged: (value) {
+                            setDialogState(() {
+                              selectedCategory = value!;
+                            });
+                          },
+                        ),
+                      const SizedBox(height: 16),
+                      
+                      // Date
+                      InkWell(
+                        onTap: () async {
+                          final date = await showDatePicker(
+                            context: context,
+                            initialDate: selectedDate,
+                            firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                            lastDate: DateTime.now(),
+                          );
+                          if (date != null) {
+                            setDialogState(() {
+                              selectedDate = date;
+                            });
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.calendar_today),
+                              const SizedBox(width: 8),
+                              Text(_formatDate(selectedDate)),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      
+                      // Notes
+                      TextField(
+                        controller: notesController,
+                        decoration: const InputDecoration(
+                          labelText: 'Catatan (opsional)',
+                          border: OutlineInputBorder(),
+                        ),
+                        maxLines: 2,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Batal'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    if (titleController.text.trim().isNotEmpty &&
+                        amountController.text.trim().isNotEmpty) {
+                      final amount = double.tryParse(amountController.text.trim());
+                      if (amount != null && amount > 0) {
+                        final transaction = Transaction(
+                          id: DateTime.now().millisecondsSinceEpoch.toString(),
+                          title: titleController.text.trim(),
+                          amount: amount,
+                          category: isIncome ? 'Pemasukan' : selectedCategory,
+                          date: selectedDate,
+                          isIncome: isIncome,
+                          notes: notesController.text.trim(),
+                        );
+                        
+                        _addTransaction(transaction);
+                        Navigator.pop(context);
+                        
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Transaksi "${transaction.title}" berhasil ditambahkan'),
+                          ),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text('Tambah'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showAddCategoryDialog() {
+    final TextEditingController nameController = TextEditingController();
+    final TextEditingController budgetController = TextEditingController();
+    IconData selectedIcon = Icons.category;
+    Color selectedColor = Colors.blue;
+
+    final List<IconData> icons = [
+      Icons.restaurant, Icons.directions_car, Icons.movie, Icons.shopping_cart,
+      Icons.receipt, Icons.home, Icons.medical_services, Icons.school,
+      Icons.sports, Icons.travel_explore, Icons.pets, Icons.work,
+    ];
+
+    final List<Color> colors = [
+      Colors.red, Colors.blue, Colors.green, Colors.orange,
+      Colors.purple, Colors.teal, Colors.pink, Colors.indigo,
+    ];
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Text('Tambah Kategori'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: nameController,
+                      decoration: const InputDecoration(
+                        labelText: 'Nama Kategori',
+                        border: OutlineInputBorder(),
+                      ),
+                      autofocus: true,
+                    ),
+                    const SizedBox(height: 16),
+                    TextField(
+                      controller: budgetController,
+                      decoration: const InputDecoration(
+                        labelText: 'Budget',
+                        prefixText: 'Rp ',
+                        border: OutlineInputBorder(),
+                      ),
+                      keyboardType: TextInputType.number,
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    // Icon selection
+                    const Text('Pilih Icon:', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: icons.map((icon) {
+                        final isSelected = icon == selectedIcon;
+                        return InkWell(
+                          onTap: () {
+                            setDialogState(() {
+                              selectedIcon = icon;
+                            });
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: isSelected ? selectedColor.withValues(alpha: 0.3) : Colors.grey[100],
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                color: isSelected ? selectedColor : Colors.grey[300]!,
+                                width: 2,
+                              ),
+                            ),
+                            child: Icon(icon, color: isSelected ? selectedColor : Colors.grey[600]),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    // Color selection
+                    const Text('Pilih Warna:', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: colors.map((color) {
+                        final isSelected = color == selectedColor;
+                        return InkWell(
+                          onTap: () {
+                            setDialogState(() {
+                              selectedColor = color;
+                            });
+                          },
+                          child: Container(
+                            width: 40,
+                            height: 40,
+                            decoration: BoxDecoration(
+                              color: color,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: isSelected ? Colors.black : Colors.transparent,
+                                width: 3,
+                              ),
+                            ),
+                            child: isSelected ? const Icon(Icons.check, color: Colors.white) : null,
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Batal'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    if (nameController.text.trim().isNotEmpty &&
+                        budgetController.text.trim().isNotEmpty) {
+                      final budget = double.tryParse(budgetController.text.trim());
+                      if (budget != null && budget > 0) {
+                        final category = BudgetCategory(
+                          name: nameController.text.trim(),
+                          budget: budget,
+                          icon: selectedIcon,
+                          color: selectedColor,
+                        );
+                        
+                        _addCategory(category);
+                        Navigator.pop(context);
+                        
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('Kategori "${category.name}" berhasil ditambahkan'),
+                          ),
+                        );
+                      }
+                    }
+                  },
+                  child: const Text('Tambah'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildOverview() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Balance Card
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Theme.of(context).primaryColor,
+                  Theme.of(context).primaryColor.withValues(alpha: 0.8),
+                ],
+              ),
+              borderRadius: BorderRadius.circular(16),
+            ),
+            child: Column(
+              children: [
+                const Text(
+                  'Saldo Saat Ini',
+                  style: TextStyle(color: Colors.white70, fontSize: 16),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _formatCurrency(balance),
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 32,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    Column(
+                      children: [
+                        const Icon(Icons.arrow_upward, color: Colors.green, size: 24),
+                        Text(
+                          _formatCurrency(totalIncome),
+                          style: const TextStyle(color: Colors.white, fontSize: 14),
+                        ),
+                        const Text(
+                          'Pemasukan',
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                    Column(
+                      children: [
+                        const Icon(Icons.arrow_downward, color: Colors.red, size: 24),
+                        Text(
+                          _formatCurrency(totalExpense),
+                          style: const TextStyle(color: Colors.white, fontSize: 14),
+                        ),
+                        const Text(
+                          'Pengeluaran',
+                          style: TextStyle(color: Colors.white70, fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+          
+          // Budget Overview
+          const Text(
+            'Ringkasan Budget',
+            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 16),
+          
+          if (_categories.isEmpty)
+            Center(
+              child: Column(
+                children: [
+                  Icon(Icons.category_outlined, size: 64, color: Colors.grey[400]),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Belum ada kategori budget',
+                    style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                  ),
+                  const SizedBox(height: 8),
+                  ElevatedButton(
+                    onPressed: _showAddCategoryDialog,
+                    child: const Text('Tambah Kategori'),
+                  ),
+                ],
+              ),
+            )
+          else
+            ...(_categories.take(5).map((category) => _buildCategoryCard(category))),
+          
+          if (_categories.length > 5)
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _selectedIndex = 1;
+                });
+              },
+              child: const Text('Lihat Semua Kategori'),
+            ),
+          
+          const SizedBox(height: 24),
+          
+          // Recent Transactions
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Transaksi Terbaru',
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ),
+              TextButton(
+                onPressed: () {
+                  setState(() {
+                    _selectedIndex = 2;
+                  });
+                },
+                child: const Text('Lihat Semua'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          
+          if (_transactions.isEmpty)
+            Center(
+              child: Column(
+                children: [
+                  Icon(Icons.receipt_outlined, size: 64, color: Colors.grey[400]),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Belum ada transaksi',
+                    style: TextStyle(fontSize: 16, color: Colors.grey[600]),
+                  ),
+                ],
+              ),
+            )
+          else
+            ...(_transactions.take(5).map((transaction) {
+              final index = _transactions.indexOf(transaction);
+              return _buildTransactionCard(transaction, index);
+            })),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCategories() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Kategori Budget',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+              ElevatedButton.icon(
+                onPressed: _showAddCategoryDialog,
+                icon: const Icon(Icons.add),
+                label: const Text('Tambah'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          
+          if (_categories.isEmpty)
+            Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.category_outlined, size: 64, color: Colors.grey[400]),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Belum ada kategori budget',
+                    style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Tap tombol + untuk menambah kategori baru',
+                    style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+                  ),
+                ],
+              ),
+            )
+          else
+            ..._categories.asMap().entries.map((entry) {
+              final index = entry.key;
+              final category = entry.value;
+              return _buildCategoryCard(category, showActions: true, index: index);
+            }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTransactions() {
+    final sortedTransactions = List<Transaction>.from(_transactions)
+      ..sort((a, b) => b.date.compareTo(a.date));
+    
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Riwayat Transaksi',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+              ElevatedButton.icon(
+                onPressed: _showAddTransactionDialog,
+                icon: const Icon(Icons.add),
+                label: const Text('Tambah'),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: sortedTransactions.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.receipt_outlined, size: 64, color: Colors.grey[400]),
+                      const SizedBox(height: 16),
+                      Text(
+                        'Belum ada transaksi',
+                        style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        'Tap tombol + untuk menambah transaksi baru',
+                        style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  itemCount: sortedTransactions.length,
+                  itemBuilder: (context, index) {
+                    final transaction = sortedTransactions[index];
+                    final originalIndex = _transactions.indexOf(transaction);
+                    return _buildTransactionCard(transaction, originalIndex);
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCategoryCard(BudgetCategory category, {bool showActions = false, int? index}) {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 16),
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: category.color.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(category.icon, color: category.color, size: 24),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        category.name,
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        '${_formatCurrency(category.spent)} / ${_formatCurrency(category.budget)}',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: category.isOverBudget ? Colors.red : Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (showActions && index != null)
+                  IconButton(
+                    icon: const Icon(Icons.delete_outline, color: Colors.red),
+                    onPressed: () {
+                      showDialog(
+                        context: context,
+                        builder: (context) => AlertDialog(
+                          title: const Text('Hapus Kategori'),
+                          content: Text('Yakin ingin menghapus kategori "${category.name}"?'),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: const Text('Batal'),
+                            ),
+                            ElevatedButton(
+                              onPressed: () {
+                                _removeCategory(index);
+                                Navigator.pop(context);
+                              },
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.red,
+                                foregroundColor: Colors.white,
+                              ),
+                              child: const Text('Hapus'),
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      '${category.percentage.toStringAsFixed(1)}%',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: category.isOverBudget ? Colors.red : Colors.green,
+                      ),
+                    ),
+                    Text(
+                      _formatCurrency(category.remaining),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: category.remaining < 0 ? Colors.red : Colors.green,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            LinearProgressIndicator(
+              value: category.percentage / 100,
+              backgroundColor: Colors.grey[300],
+              valueColor: AlwaysStoppedAnimation<Color>(
+                category.isOverBudget ? Colors.red : category.color,
+              ),
+            ),
+            if (category.isOverBudget)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Row(
+                  children: [
+                    const Icon(Icons.warning, color: Colors.red, size: 16),
+                    const SizedBox(width: 4),
+                    Text(
+                      'Melebihi budget sebesar ${_formatCurrency(-category.remaining)}',
+                      style: const TextStyle(color: Colors.red, fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTransactionCard(Transaction transaction, int index) {
+    return Dismissible(
+      key: Key(transaction.id),
+      direction: DismissDirection.endToStart,
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 20),
+        margin: const EdgeInsets.symmetric(vertical: 4),
+        decoration: BoxDecoration(
+          color: Colors.red[400],
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Icon(Icons.delete, color: Colors.white, size: 24),
+      ),
+      onDismissed: (direction) {
+        _removeTransaction(index);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Transaksi "${transaction.title}" dihapus'),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      },
+      child: Card(
+        margin: const EdgeInsets.only(bottom: 8),
+        elevation: 1,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        child: ListTile(
+          contentPadding: const EdgeInsets.all(16),
+          leading: Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: transaction.isIncome 
+                  ? Colors.green.withValues(alpha: 0.2) 
+                  : Colors.red.withValues(alpha: 0.2),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              transaction.isIncome ? Icons.arrow_upward : Icons.arrow_downward,
+              color: transaction.isIncome ? Colors.green : Colors.red,
+              size: 24,
+            ),
+          ),
+          title: Text(
+            transaction.title,
+            style: const TextStyle(fontWeight: FontWeight.bold),
+          ),
+          subtitle: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                transaction.category,
+                style: TextStyle(color: Colors.grey[600]),
+              ),
+              Text(
+                _formatDate(transaction.date),
+                style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+              ),
+              if (transaction.notes.isNotEmpty)
+                Text(
+                  transaction.notes,
+                  style: TextStyle(fontSize: 12, color: Colors.blue[600], fontStyle: FontStyle.italic),
+                ),
+            ],
+          ),
+          trailing: Text(
+            '${transaction.isIncome ? '+' : '-'} ${_formatCurrency(transaction.amount)}',
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: transaction.isIncome ? Colors.green : Colors.red,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _formatCurrency(double amount) {
+    if (amount >= 1000000) {
+      return 'Rp ${(amount / 1000000).toStringAsFixed(1)}M';
+    } else if (amount >= 1000) {
+      return 'Rp ${(amount / 1000).toStringAsFixed(0)}K';
+    } else {
+      return 'Rp ${amount.toStringAsFixed(0)}';
+    }
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.day}/${date.month}/${date.year}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return Scaffold(
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: [
+          _buildOverview(),
+          _buildCategories(),
+          _buildTransactions(),
+        ],
+      ),
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _selectedIndex,
+        onTap: (index) {
+          setState(() {
+            _selectedIndex = index;
+          });
+        },
+        items: const [
+          BottomNavigationBarItem(
+            icon: Icon(Icons.dashboard),
+            label: 'Overview',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.category),
+            label: 'Kategori',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.receipt),
+            label: 'Transaksi',
+          ),
+        ],
+      ),
+      floatingActionButton: ScaleTransition(
+        scale: Tween<double>(begin: 1.0, end: 0.85).animate(
+          CurvedAnimation(
+            parent: _fabAnimationController,
+            curve: Curves.elasticOut,
+          ),
+        ),
+        child: FloatingActionButton.extended(
+          onPressed: _selectedIndex == 1 ? _showAddCategoryDialog : _showAddTransactionDialog,
+          icon: const Icon(Icons.add),
+          label: Text(_selectedIndex == 1 ? 'Tambah Kategori' : 'Tambah Transaksi'),
+          backgroundColor: Theme.of(context).primaryColor,
+          foregroundColor: Colors.white,
+        ),
+      ),
+    );
+  }
+}
+
+// Todo List Screen (existing functionality)
 class TodoListScreen extends StatefulWidget {
   const TodoListScreen({super.key});
 
@@ -225,7 +1402,6 @@ class _TodoListScreenState extends State<TodoListScreen>
     final now = DateTime.now();
     
     for (var todoItem in _todoItems) {
-      // Check subtask notifications only
       for (var subtask in todoItem.subtasks) {
         if (subtask.scheduledTime != null && !subtask.isCompleted) {
           final startDiff = subtask.scheduledTime!.difference(now).inMinutes;
@@ -368,14 +1544,7 @@ class _TodoListScreenState extends State<TodoListScreen>
     });
     _saveTodoItems();
   }
-
-  void _clearCompleted() {
-    setState(() {
-      _todoItems.removeWhere((item) => item.isCompleted);
-    });
-    _saveTodoItems();
-  }
-
+  
   Future<DateTime?> _selectDateTime(BuildContext context, {DateTime? initialDate}) async {
     final date = await showDatePicker(
       context: context,
@@ -1416,57 +2585,12 @@ class _TodoListScreenState extends State<TodoListScreen>
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Scaffold(
-        body: Center(
-          child: CircularProgressIndicator(),
-        ),
+      return const Center(
+        child: CircularProgressIndicator(),
       );
     }
 
     return Scaffold(
-      backgroundColor: Colors.grey[50],
-      appBar: AppBar(
-        title: const Text(
-          'Daftar Tugas',
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        actions: [
-          if (_completedCount > 0)
-            IconButton(
-              icon: const Icon(Icons.clear_all),
-              onPressed: () {
-                showDialog(
-                  context: context,
-                  builder: (context) => AlertDialog(
-                    title: const Text('Hapus Tugas Selesai'),
-                    content: Text('Hapus $_completedCount tugas yang sudah selesai?'),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('Batal'),
-                      ),
-                      ElevatedButton(
-                        onPressed: () {
-                          _clearCompleted();
-                          Navigator.pop(context);
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red,
-                          foregroundColor: Colors.white,
-                        ),
-                        child: const Text('Hapus'),
-                      ),
-                    ],
-                  ),
-                );
-              },
-              tooltip: 'Hapus tugas yang sudah selesai',
-            ),
-        ],
-      ),
       body: Column(
         children: [
           if (_totalCount > 0)
