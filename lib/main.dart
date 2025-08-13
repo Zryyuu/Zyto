@@ -52,47 +52,111 @@ class MyApp extends StatelessWidget {
   }
 }
 
-// Budget Models
-class BudgetCategory {
+// Savings Plan Models
+class SavingsPlan {
+  String id;
   String name;
-  double budget;
-  double spent;
+  double targetAmount;
+  double currentAmount;
+  DateTime targetDate;
+  String description;
   IconData icon;
   Color color;
+  bool isCompleted;
 
-  BudgetCategory({
+  SavingsPlan({
+    required this.id,
     required this.name,
-    required this.budget,
-    this.spent = 0.0,
-    this.icon = Icons.category,
+    required this.targetAmount,
+    this.currentAmount = 0.0,
+    required this.targetDate,
+    this.description = '',
+    this.icon = Icons.savings,
     this.color = Colors.blue,
+    this.isCompleted = false,
   });
 
-  double get remaining => budget - spent;
-  double get percentage => budget > 0 ? (spent / budget) * 100 : 0;
-  bool get isOverBudget => spent > budget;
+  double get progress => targetAmount > 0 ? (currentAmount / targetAmount) * 100 : 0;
+  double get remaining => targetAmount - currentAmount;
+  bool get isOverdue => DateTime.now().isAfter(targetDate) && !isCompleted;
+  
+  int get daysRemaining {
+    if (isCompleted) return 0;
+    final now = DateTime.now();
+    return targetDate.difference(now).inDays;
+  }
+
+  double get dailySavingsNeeded {
+    if (isCompleted || daysRemaining <= 0) return 0;
+    return remaining / daysRemaining;
+  }
 
   Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'name': name,
-      'budget': budget,
-      'spent': spent,
+      'targetAmount': targetAmount,
+      'currentAmount': currentAmount,
+      'targetDate': targetDate.toIso8601String(),
+      'description': description,
       'icon': icon.codePoint,
       'color': color.toARGB32(),
+      'isCompleted': isCompleted,
     };
   }
 
-  factory BudgetCategory.fromJson(Map<String, dynamic> json) {
-    return BudgetCategory(
+  factory SavingsPlan.fromJson(Map<String, dynamic> json) {
+    return SavingsPlan(
+      id: json['id'],
       name: json['name'],
-      budget: json['budget'].toDouble(),
-      spent: json['spent'].toDouble(),
+      targetAmount: json['targetAmount'].toDouble(),
+      currentAmount: json['currentAmount'].toDouble(),
+      targetDate: DateTime.parse(json['targetDate']),
+      description: json['description'] ?? '',
       icon: IconData(json['icon'], fontFamily: 'MaterialIcons'),
       color: Color(json['color']),
+      isCompleted: json['isCompleted'] ?? false,
     );
   }
 }
 
+class SavingsTransaction {
+  String id;
+  String planId;
+  double amount;
+  DateTime date;
+  String notes;
+
+  SavingsTransaction({
+    required this.id,
+    required this.planId,
+    required this.amount,
+    required this.date,
+    this.notes = '',
+  });
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'planId': planId,
+      'amount': amount,
+      'date': date.toIso8601String(),
+      'notes': notes,
+    };
+  }
+
+  factory SavingsTransaction.fromJson(Map<String, dynamic> json) {
+    return SavingsTransaction(
+      id: json['id'],
+      planId: json['planId'],
+      amount: json['amount'].toDouble(),
+      date: DateTime.parse(json['date']),
+      notes: json['notes'] ?? '',
+    );
+  }
+}
+
+// Transaction Models (existing)
 class Transaction {
   String id;
   String title;
@@ -330,7 +394,7 @@ class _MainScreenState extends State<MainScreen> with SingleTickerProviderStateM
   }
 }
 
-// Budget Screen
+// Budget Screen - Updated with Savings Plans
 class BudgetScreen extends StatefulWidget {
   const BudgetScreen({super.key});
 
@@ -339,11 +403,12 @@ class BudgetScreen extends StatefulWidget {
 }
 
 class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMixin {
-  final List<BudgetCategory> _categories = [];
   final List<Transaction> _transactions = [];
+  final List<SavingsPlan> _savingsPlans = [];
+  final List<SavingsTransaction> _savingsTransactions = [];
   late AnimationController _fabAnimationController;
   bool _isLoading = true;
-  int _selectedIndex = 0; // 0: Overview, 1: Categories, 2: Transactions
+  int _selectedIndex = 0; // 0: Transactions, 1: Savings Plans
 
   @override
   void initState() {
@@ -353,7 +418,6 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
       vsync: this,
     );
     _loadBudgetData();
-    _initializeDefaultCategories();
   }
 
   @override
@@ -362,32 +426,9 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
     super.dispose();
   }
 
-  void _initializeDefaultCategories() {
-    if (_categories.isEmpty) {
-      _categories.addAll([
-        BudgetCategory(name: 'Makanan', budget: 1000000, icon: Icons.restaurant, color: Colors.orange),
-        BudgetCategory(name: 'Transportasi', budget: 500000, icon: Icons.directions_car, color: Colors.blue),
-        BudgetCategory(name: 'Hiburan', budget: 300000, icon: Icons.movie, color: Colors.purple),
-        BudgetCategory(name: 'Belanja', budget: 800000, icon: Icons.shopping_cart, color: Colors.green),
-        BudgetCategory(name: 'Tagihan', budget: 1200000, icon: Icons.receipt, color: Colors.red),
-      ]);
-      _saveBudgetData();
-    }
-  }
-
   Future<void> _loadBudgetData() async {
     try {
       SharedPreferences prefs = await SharedPreferences.getInstance();
-      
-      // Load categories
-      List<String>? categoryStrings = prefs.getStringList('budget_categories');
-      if (categoryStrings != null) {
-        _categories.clear();
-        for (String categoryString in categoryStrings) {
-          Map<String, dynamic> categoryMap = json.decode(categoryString);
-          _categories.add(BudgetCategory.fromJson(categoryMap));
-        }
-      }
       
       // Load transactions
       List<String>? transactionStrings = prefs.getStringList('budget_transactions');
@@ -396,6 +437,26 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
         for (String transactionString in transactionStrings) {
           Map<String, dynamic> transactionMap = json.decode(transactionString);
           _transactions.add(Transaction.fromJson(transactionMap));
+        }
+      }
+      
+      // Load savings plans
+      List<String>? savingsStrings = prefs.getStringList('savings_plans');
+      if (savingsStrings != null) {
+        _savingsPlans.clear();
+        for (String savingsString in savingsStrings) {
+          Map<String, dynamic> savingsMap = json.decode(savingsString);
+          _savingsPlans.add(SavingsPlan.fromJson(savingsMap));
+        }
+      }
+      
+      // Load savings transactions
+      List<String>? savingsTransactionStrings = prefs.getStringList('savings_transactions');
+      if (savingsTransactionStrings != null) {
+        _savingsTransactions.clear();
+        for (String savingsTransactionString in savingsTransactionStrings) {
+          Map<String, dynamic> savingsTransactionMap = json.decode(savingsTransactionString);
+          _savingsTransactions.add(SavingsTransaction.fromJson(savingsTransactionMap));
         }
       }
       
@@ -412,71 +473,80 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
   Future<void> _saveBudgetData() async {
     SharedPreferences prefs = await SharedPreferences.getInstance();
     
-    // Save categories
-    List<String> categoryStrings = _categories
-        .map((category) => json.encode(category.toJson()))
-        .toList();
-    await prefs.setStringList('budget_categories', categoryStrings);
-    
     // Save transactions
     List<String> transactionStrings = _transactions
         .map((transaction) => json.encode(transaction.toJson()))
         .toList();
     await prefs.setStringList('budget_transactions', transactionStrings);
+    
+    // Save savings plans
+    List<String> savingsStrings = _savingsPlans
+        .map((plan) => json.encode(plan.toJson()))
+        .toList();
+    await prefs.setStringList('savings_plans', savingsStrings);
+    
+    // Save savings transactions
+    List<String> savingsTransactionStrings = _savingsTransactions
+        .map((transaction) => json.encode(transaction.toJson()))
+        .toList();
+    await prefs.setStringList('savings_transactions', savingsTransactionStrings);
   }
 
   void _addTransaction(Transaction transaction) {
     setState(() {
       _transactions.add(transaction);
-      
-      // Update category spending
-      if (!transaction.isIncome) {
-        for (var category in _categories) {
-          if (category.name == transaction.category) {
-            category.spent += transaction.amount;
-            break;
-          }
-        }
-      }
     });
     _saveBudgetData();
   }
 
   void _removeTransaction(int index) {
-    final transaction = _transactions[index];
     setState(() {
       _transactions.removeAt(index);
-      
-      // Update category spending
-      if (!transaction.isIncome) {
-        for (var category in _categories) {
-          if (category.name == transaction.category) {
-            category.spent -= transaction.amount;
-            if (category.spent < 0) category.spent = 0;
-            break;
+    });
+    _saveBudgetData();
+  }
+
+  void _addSavingsPlan(SavingsPlan plan) {
+    setState(() {
+      _savingsPlans.add(plan);
+    });
+    _saveBudgetData();
+  }
+
+  void _removeSavingsPlan(int index) {
+    final planId = _savingsPlans[index].id;
+    setState(() {
+      _savingsPlans.removeAt(index);
+      _savingsTransactions.removeWhere((t) => t.planId == planId);
+    });
+    _saveBudgetData();
+  }
+
+  void _addToSavings(String planId, double amount, String notes) {
+    final transaction = SavingsTransaction(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      planId: planId,
+      amount: amount,
+      date: DateTime.now(),
+      notes: notes,
+    );
+
+    setState(() {
+      _savingsTransactions.add(transaction);
+      // Update plan current amount
+      for (var plan in _savingsPlans) {
+        if (plan.id == planId) {
+          plan.currentAmount += amount;
+          if (plan.currentAmount >= plan.targetAmount) {
+            plan.isCompleted = true;
           }
+          break;
         }
       }
     });
     _saveBudgetData();
   }
 
-  void _addCategory(BudgetCategory category) {
-    setState(() {
-      _categories.add(category);
-    });
-    _saveBudgetData();
-  }
-
-  void _removeCategory(int index) {
-    setState(() {
-      _categories.removeAt(index);
-    });
-    _saveBudgetData();
-  }
-
-  double get totalBudget => _categories.fold(0, (sum, cat) => sum + cat.budget);
-  double get totalSpent => _categories.fold(0, (sum, cat) => sum + cat.spent);
   double get totalIncome => _transactions
       .where((t) => t.isIncome)
       .fold(0, (sum, t) => sum + t.amount);
@@ -484,12 +554,13 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
       .where((t) => !t.isIncome)
       .fold(0, (sum, t) => sum + t.amount);
   double get balance => totalIncome - totalExpense;
+  double get totalSavings => _savingsPlans.fold(0, (sum, plan) => sum + plan.currentAmount);
 
   void _showAddTransactionDialog() {
     final TextEditingController titleController = TextEditingController();
     final TextEditingController amountController = TextEditingController();
     final TextEditingController notesController = TextEditingController();
-    String selectedCategory = _categories.isNotEmpty ? _categories.first.name : '';
+    final TextEditingController categoryController = TextEditingController();
     bool isIncome = false;
     DateTime selectedDate = DateTime.now();
 
@@ -562,32 +633,14 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
                       ),
                       const SizedBox(height: 16),
                       
-                      // Category (only for expenses)
-                      if (!isIncome && _categories.isNotEmpty)
-                        DropdownButtonFormField<String>(
-                          value: selectedCategory,
-                          decoration: const InputDecoration(
-                            labelText: 'Kategori',
-                            border: OutlineInputBorder(),
-                          ),
-                          items: _categories.map((category) {
-                            return DropdownMenuItem(
-                              value: category.name,
-                              child: Row(
-                                children: [
-                                  Icon(category.icon, color: category.color, size: 20),
-                                  const SizedBox(width: 8),
-                                  Text(category.name),
-                                ],
-                              ),
-                            );
-                          }).toList(),
-                          onChanged: (value) {
-                            setDialogState(() {
-                              selectedCategory = value!;
-                            });
-                          },
+                      // Category
+                      TextField(
+                        controller: categoryController,
+                        decoration: const InputDecoration(
+                          labelText: 'Kategori',
+                          border: OutlineInputBorder(),
                         ),
+                      ),
                       const SizedBox(height: 16),
                       
                       // Date
@@ -643,14 +696,15 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
                 ElevatedButton(
                   onPressed: () {
                     if (titleController.text.trim().isNotEmpty &&
-                        amountController.text.trim().isNotEmpty) {
+                        amountController.text.trim().isNotEmpty &&
+                        categoryController.text.trim().isNotEmpty) {
                       final amount = double.tryParse(amountController.text.trim());
                       if (amount != null && amount > 0) {
                         final transaction = Transaction(
                           id: DateTime.now().millisecondsSinceEpoch.toString(),
                           title: titleController.text.trim(),
                           amount: amount,
-                          category: isIncome ? 'Pemasukan' : selectedCategory,
+                          category: categoryController.text.trim(),
                           date: selectedDate,
                           isIncome: isIncome,
                           notes: notesController.text.trim(),
@@ -677,21 +731,22 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
     );
   }
 
-  void _showAddCategoryDialog() {
+  void _showAddSavingsPlanDialog() {
     final TextEditingController nameController = TextEditingController();
-    final TextEditingController budgetController = TextEditingController();
-    IconData selectedIcon = Icons.category;
+    final TextEditingController targetController = TextEditingController();
+    final TextEditingController descController = TextEditingController();
+    DateTime selectedDate = DateTime.now().add(const Duration(days: 30));
+    IconData selectedIcon = Icons.savings;
     Color selectedColor = Colors.blue;
 
     final List<IconData> icons = [
-      Icons.restaurant, Icons.directions_car, Icons.movie, Icons.shopping_cart,
-      Icons.receipt, Icons.home, Icons.medical_services, Icons.school,
-      Icons.sports, Icons.travel_explore, Icons.pets, Icons.work,
+      Icons.savings, Icons.home, Icons.directions_car, Icons.flight,
+      Icons.phone_android, Icons.laptop, Icons.school, Icons.medical_services,
     ];
 
     final List<Color> colors = [
-      Colors.red, Colors.blue, Colors.green, Colors.orange,
-      Colors.purple, Colors.teal, Colors.pink, Colors.indigo,
+      Colors.blue, Colors.green, Colors.orange, Colors.purple,
+      Colors.red, Colors.teal, Colors.indigo, Colors.pink,
     ];
 
     showDialog(
@@ -701,7 +756,7 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
           builder: (context, setDialogState) {
             return AlertDialog(
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              title: const Text('Tambah Kategori'),
+              title: const Text('Tambah Rencana Menabung'),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -709,20 +764,62 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
                     TextField(
                       controller: nameController,
                       decoration: const InputDecoration(
-                        labelText: 'Nama Kategori',
+                        labelText: 'Nama Rencana',
                         border: OutlineInputBorder(),
                       ),
                       autofocus: true,
                     ),
                     const SizedBox(height: 16),
                     TextField(
-                      controller: budgetController,
+                      controller: targetController,
                       decoration: const InputDecoration(
-                        labelText: 'Budget',
+                        labelText: 'Target Jumlah',
                         prefixText: 'Rp ',
                         border: OutlineInputBorder(),
                       ),
                       keyboardType: TextInputType.number,
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    // Target Date
+                    InkWell(
+                      onTap: () async {
+                        final date = await showDatePicker(
+                          context: context,
+                          initialDate: selectedDate,
+                          firstDate: DateTime.now(),
+                          lastDate: DateTime.now().add(const Duration(days: 3650)),
+                        );
+                        if (date != null) {
+                          setDialogState(() {
+                            selectedDate = date;
+                          });
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.calendar_today),
+                            const SizedBox(width: 8),
+                            Text('Target: ${_formatDate(selectedDate)}'),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    
+                    TextField(
+                      controller: descController,
+                      decoration: const InputDecoration(
+                        labelText: 'Deskripsi (opsional)',
+                        border: OutlineInputBorder(),
+                      ),
+                      maxLines: 2,
                     ),
                     const SizedBox(height: 16),
                     
@@ -798,22 +895,25 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
                 ElevatedButton(
                   onPressed: () {
                     if (nameController.text.trim().isNotEmpty &&
-                        budgetController.text.trim().isNotEmpty) {
-                      final budget = double.tryParse(budgetController.text.trim());
-                      if (budget != null && budget > 0) {
-                        final category = BudgetCategory(
+                        targetController.text.trim().isNotEmpty) {
+                      final target = double.tryParse(targetController.text.trim());
+                      if (target != null && target > 0) {
+                        final plan = SavingsPlan(
+                          id: DateTime.now().millisecondsSinceEpoch.toString(),
                           name: nameController.text.trim(),
-                          budget: budget,
+                          targetAmount: target,
+                          targetDate: selectedDate,
+                          description: descController.text.trim(),
                           icon: selectedIcon,
                           color: selectedColor,
                         );
                         
-                        _addCategory(category);
+                        _addSavingsPlan(plan);
                         Navigator.pop(context);
                         
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(
-                            content: Text('Kategori "${category.name}" berhasil ditambahkan'),
+                            content: Text('Rencana "${plan.name}" berhasil ditambahkan'),
                           ),
                         );
                       }
@@ -829,209 +929,66 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
     );
   }
 
-  Widget _buildOverview() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Balance Card
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  Theme.of(context).primaryColor,
-                  Theme.of(context).primaryColor.withValues(alpha: 0.8),
-                ],
-              ),
-              borderRadius: BorderRadius.circular(16),
-            ),
-            child: Column(
-              children: [
-                const Text(
-                  'Saldo Saat Ini',
-                  style: TextStyle(color: Colors.white70, fontSize: 16),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _formatCurrency(balance),
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 32,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceAround,
-                  children: [
-                    Column(
-                      children: [
-                        const Icon(Icons.arrow_upward, color: Colors.green, size: 24),
-                        Text(
-                          _formatCurrency(totalIncome),
-                          style: const TextStyle(color: Colors.white, fontSize: 14),
-                        ),
-                        const Text(
-                          'Pemasukan',
-                          style: TextStyle(color: Colors.white70, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                    Column(
-                      children: [
-                        const Icon(Icons.arrow_downward, color: Colors.red, size: 24),
-                        Text(
-                          _formatCurrency(totalExpense),
-                          style: const TextStyle(color: Colors.white, fontSize: 14),
-                        ),
-                        const Text(
-                          'Pengeluaran',
-                          style: TextStyle(color: Colors.white70, fontSize: 12),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 24),
-          
-          // Budget Overview
-          const Text(
-            'Ringkasan Budget',
-            style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 16),
-          
-          if (_categories.isEmpty)
-            Center(
-              child: Column(
-                children: [
-                  Icon(Icons.category_outlined, size: 64, color: Colors.grey[400]),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Belum ada kategori budget',
-                    style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-                  ),
-                  const SizedBox(height: 8),
-                  ElevatedButton(
-                    onPressed: _showAddCategoryDialog,
-                    child: const Text('Tambah Kategori'),
-                  ),
-                ],
-              ),
-            )
-          else
-            ...(_categories.take(5).map((category) => _buildCategoryCard(category))),
-          
-          if (_categories.length > 5)
-            TextButton(
-              onPressed: () {
-                setState(() {
-                  _selectedIndex = 1;
-                });
-              },
-              child: const Text('Lihat Semua Kategori'),
-            ),
-          
-          const SizedBox(height: 24),
-          
-          // Recent Transactions
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text(
-                'Transaksi Terbaru',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-              ),
-              TextButton(
-                onPressed: () {
-                  setState(() {
-                    _selectedIndex = 2;
-                  });
-                },
-                child: const Text('Lihat Semua'),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          
-          if (_transactions.isEmpty)
-            Center(
-              child: Column(
-                children: [
-                  Icon(Icons.receipt_outlined, size: 64, color: Colors.grey[400]),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Belum ada transaksi',
-                    style: TextStyle(fontSize: 16, color: Colors.grey[600]),
-                  ),
-                ],
-              ),
-            )
-          else
-            ...(_transactions.take(5).map((transaction) {
-              final index = _transactions.indexOf(transaction);
-              return _buildTransactionCard(transaction, index);
-            })),
-        ],
-      ),
-    );
-  }
+  void _showAddToSavingsDialog(SavingsPlan plan) {
+    final TextEditingController amountController = TextEditingController();
+    final TextEditingController notesController = TextEditingController();
 
-  Widget _buildCategories() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Text('Tambah ke "${plan.name}"'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              const Text(
-                'Kategori Budget',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              TextField(
+                controller: amountController,
+                decoration: const InputDecoration(
+                  labelText: 'Jumlah Menabung',
+                  prefixText: 'Rp ',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.number,
+                autofocus: true,
               ),
-              ElevatedButton.icon(
-                onPressed: _showAddCategoryDialog,
-                icon: const Icon(Icons.add),
-                label: const Text('Tambah'),
+              const SizedBox(height: 16),
+              TextField(
+                controller: notesController,
+                decoration: const InputDecoration(
+                  labelText: 'Catatan (opsional)',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 2,
               ),
             ],
           ),
-          const SizedBox(height: 16),
-          
-          if (_categories.isEmpty)
-            Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.category_outlined, size: 64, color: Colors.grey[400]),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Belum ada kategori budget',
-                    style: TextStyle(fontSize: 18, color: Colors.grey[600]),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Tap tombol + untuk menambah kategori baru',
-                    style: TextStyle(fontSize: 14, color: Colors.grey[500]),
-                  ),
-                ],
-              ),
-            )
-          else
-            ..._categories.asMap().entries.map((entry) {
-              final index = entry.key;
-              final category = entry.value;
-              return _buildCategoryCard(category, showActions: true, index: index);
-            }),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Batal'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (amountController.text.trim().isNotEmpty) {
+                  final amount = double.tryParse(amountController.text.trim());
+                  if (amount != null && amount > 0) {
+                    _addToSavings(plan.id, amount, notesController.text.trim());
+                    Navigator.pop(context);
+                    
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Berhasil menabung ${_formatCurrency(amount)} ke "${plan.name}"'),
+                      ),
+                    );
+                  }
+                }
+              },
+              child: const Text('Tambah'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -1041,14 +998,93 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
     
     return Column(
       children: [
+        // Balance Card
         Container(
-          padding: const EdgeInsets.all(16),
+          width: double.infinity,
+          margin: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                Theme.of(context).primaryColor,
+                Theme.of(context).primaryColor.withValues(alpha: 0.8),
+              ],
+            ),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Column(
+            children: [
+              const Text(
+                'Saldo Saat Ini',
+                style: TextStyle(color: Colors.white70, fontSize: 16),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _formatCurrency(balance),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 32,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                children: [
+                  Column(
+                    children: [
+                      const Icon(Icons.arrow_upward, color: Colors.green, size: 24),
+                      Text(
+                        _formatCurrency(totalIncome),
+                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                      ),
+                      const Text(
+                        'Pemasukan',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                  Column(
+                    children: [
+                      const Icon(Icons.arrow_downward, color: Colors.red, size: 24),
+                      Text(
+                        _formatCurrency(totalExpense),
+                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                      ),
+                      const Text(
+                        'Pengeluaran',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                  Column(
+                    children: [
+                      const Icon(Icons.savings, color: Colors.amber, size: 24),
+                      Text(
+                        _formatCurrency(totalSavings),
+                        style: const TextStyle(color: Colors.white, fontSize: 14),
+                      ),
+                      const Text(
+                        'Total Tabungan',
+                        style: TextStyle(color: Colors.white70, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        
+        // Transactions Header
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               const Text(
                 'Riwayat Transaksi',
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
               ),
               ElevatedButton.icon(
                 onPressed: _showAddTransactionDialog,
@@ -1058,6 +1094,7 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
             ],
           ),
         ),
+        
         Expanded(
           child: sortedTransactions.isEmpty
               ? Center(
@@ -1092,11 +1129,74 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
     );
   }
 
-  Widget _buildCategoryCard(BudgetCategory category, {bool showActions = false, int? index}) {
+  Widget _buildSavingsPlans() {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text(
+                'Rencana Menabung',
+                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+              ),
+              ElevatedButton.icon(
+                onPressed: _showAddSavingsPlanDialog,
+                icon: const Icon(Icons.add),
+                label: const Text('Tambah'),
+              ),
+            ],
+          ),
+        ),
+        
+        if (_savingsPlans.isEmpty)
+          Expanded(
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.savings_outlined, size: 64, color: Colors.grey[400]),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Belum ada rencana menabung',
+                    style: TextStyle(fontSize: 18, color: Colors.grey[600]),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Tap tombol + untuk membuat rencana baru',
+                    style: TextStyle(fontSize: 14, color: Colors.grey[500]),
+                  ),
+                ],
+              ),
+            ),
+          )
+        else
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 16),
+              itemCount: _savingsPlans.length,
+              itemBuilder: (context, index) {
+                return _buildSavingsPlanCard(_savingsPlans[index], index);
+              },
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildSavingsPlanCard(SavingsPlan plan, int index) {
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      elevation: 3,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(16),
+        side: plan.isOverdue && !plan.isCompleted
+            ? const BorderSide(color: Colors.red, width: 2)
+            : plan.isCompleted
+                ? const BorderSide(color: Colors.green, width: 2)
+                : BorderSide.none,
+      ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -1105,109 +1205,316 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(8),
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: category.color.withValues(alpha: 0.2),
-                    borderRadius: BorderRadius.circular(8),
+                    color: plan.color.withValues(alpha: 0.2),
+                    borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Icon(category.icon, color: category.color, size: 24),
+                  child: Icon(plan.icon, color: plan.color, size: 28),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 16),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        category.name,
-                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              plan.name,
+                              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          if (plan.isCompleted)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.green,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Text(
+                                'SELESAI',
+                                style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          if (plan.isOverdue && !plan.isCompleted)
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                              decoration: BoxDecoration(
+                                color: Colors.red,
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Text(
+                                'TERLAMBAT',
+                                style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                        ],
                       ),
                       Text(
-                        '${_formatCurrency(category.spent)} / ${_formatCurrency(category.budget)}',
+                        '${_formatCurrency(plan.currentAmount)} / ${_formatCurrency(plan.targetAmount)}',
                         style: TextStyle(
                           fontSize: 14,
-                          color: category.isOverBudget ? Colors.red : Colors.grey[600],
+                          color: Colors.grey[600],
                         ),
                       ),
+                      if (plan.description.isNotEmpty)
+                        Text(
+                          plan.description,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.blue[600],
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
                     ],
                   ),
                 ),
-                if (showActions && index != null)
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, color: Colors.red),
-                    onPressed: () {
-                      showDialog(
-                        context: context,
-                        builder: (context) => AlertDialog(
-                          title: const Text('Hapus Kategori'),
-                          content: Text('Yakin ingin menghapus kategori "${category.name}"?'),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.pop(context),
-                              child: const Text('Batal'),
-                            ),
-                            ElevatedButton(
-                              onPressed: () {
-                                _removeCategory(index);
-                                Navigator.pop(context);
-                              },
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.red,
-                                foregroundColor: Colors.white,
-                              ),
-                              child: const Text('Hapus'),
-                            ),
-                          ],
-                        ),
-                      );
-                    },
-                  ),
                 Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      '${category.percentage.toStringAsFixed(1)}%',
+                      '${plan.progress.toStringAsFixed(1)}%',
                       style: TextStyle(
                         fontSize: 16,
                         fontWeight: FontWeight.bold,
-                        color: category.isOverBudget ? Colors.red : Colors.green,
+                        color: plan.isCompleted ? Colors.green : plan.color,
                       ),
                     ),
                     Text(
-                      _formatCurrency(category.remaining),
+                      _formatCurrency(plan.remaining),
                       style: TextStyle(
                         fontSize: 12,
-                        color: category.remaining < 0 ? Colors.red : Colors.green,
+                        color: plan.remaining <= 0 ? Colors.green : Colors.orange,
                       ),
                     ),
                   ],
                 ),
               ],
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 16),
+            
+            // Progress Bar
             LinearProgressIndicator(
-              value: category.percentage / 100,
+              value: plan.progress / 100,
               backgroundColor: Colors.grey[300],
               valueColor: AlwaysStoppedAnimation<Color>(
-                category.isOverBudget ? Colors.red : category.color,
+                plan.isCompleted ? Colors.green : plan.color,
               ),
             ),
-            if (category.isOverBudget)
-              Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: Row(
+            const SizedBox(height: 12),
+            
+            // Date and daily savings info
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(Icons.warning, color: Colors.red, size: 16),
-                    const SizedBox(width: 4),
-                    Text(
-                      'Melebihi budget sebesar ${_formatCurrency(-category.remaining)}',
-                      style: const TextStyle(color: Colors.red, fontSize: 12),
+                    Row(
+                      children: [
+                        Icon(Icons.calendar_today, size: 14, color: Colors.grey[600]),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Target: ${_formatDate(plan.targetDate)}',
+                          style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                        ),
+                      ],
                     ),
+                    if (!plan.isCompleted && plan.daysRemaining > 0)
+                      Row(
+                        children: [
+                          Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
+                          const SizedBox(width: 4),
+                          Text(
+                            '${plan.daysRemaining} hari lagi',
+                            style: TextStyle(
+                              fontSize: 12, 
+                              color: plan.isOverdue ? Colors.red : Colors.grey[600],
+                            ),
+                          ),
+                        ],
+                      ),
                   ],
                 ),
-              ),
+                if (!plan.isCompleted && plan.dailySavingsNeeded > 0)
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Text(
+                        'Per hari:',
+                        style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+                      ),
+                      Text(
+                        _formatCurrency(plan.dailySavingsNeeded),
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: plan.color,
+                        ),
+                      ),
+                    ],
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            
+            // Action Buttons
+            Row(
+              children: [
+                if (!plan.isCompleted)
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      onPressed: () => _showAddToSavingsDialog(plan),
+                      icon: const Icon(Icons.add, size: 16),
+                      label: const Text('Tambah'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: plan.color,
+                        foregroundColor: Colors.white,
+                      ),
+                    ),
+                  ),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: () => _showSavingsPlanDetail(plan),
+                  icon: const Icon(Icons.info_outline),
+                  tooltip: 'Detail',
+                ),
+                IconButton(
+                  onPressed: () {
+                    showDialog(
+                      context: context,
+                      builder: (context) => AlertDialog(
+                        title: const Text('Hapus Rencana'),
+                        content: Text('Yakin ingin menghapus rencana "${plan.name}"?'),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            child: const Text('Batal'),
+                          ),
+                          ElevatedButton(
+                            onPressed: () {
+                              _removeSavingsPlan(index);
+                              Navigator.pop(context);
+                            },
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.red,
+                              foregroundColor: Colors.white,
+                            ),
+                            child: const Text('Hapus'),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                  tooltip: 'Hapus',
+                ),
+              ],
+            ),
           ],
         ),
       ),
+    );
+  }
+
+  void _showSavingsPlanDetail(SavingsPlan plan) {
+    final planTransactions = _savingsTransactions
+        .where((t) => t.planId == plan.id)
+        .toList()
+      ..sort((a, b) => b.date.compareTo(a.date));
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              Icon(plan.icon, color: plan.color),
+              const SizedBox(width: 8),
+              Expanded(child: Text(plan.name)),
+            ],
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            height: 400,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Progress Info
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: plan.color.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text('Target: ${_formatCurrency(plan.targetAmount)}'),
+                          Text('${plan.progress.toStringAsFixed(1)}%'),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text('Terkumpul: ${_formatCurrency(plan.currentAmount)}'),
+                      Text('Sisa: ${_formatCurrency(plan.remaining)}'),
+                      if (!plan.isCompleted && plan.daysRemaining > 0)
+                        Text('Per hari: ${_formatCurrency(plan.dailySavingsNeeded)}'),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                
+                // Transaction History
+                const Text('Riwayat Menabung:', style: TextStyle(fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                
+                if (planTransactions.isEmpty)
+                  const Expanded(
+                    child: Center(
+                      child: Text('Belum ada riwayat menabung'),
+                    ),
+                  )
+                else
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: planTransactions.length,
+                      itemBuilder: (context, index) {
+                        final transaction = planTransactions[index];
+                        return ListTile(
+                          dense: true,
+                          leading: Icon(Icons.add, color: Colors.green, size: 20),
+                          title: Text(_formatCurrency(transaction.amount)),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(_formatDate(transaction.date)),
+                              if (transaction.notes.isNotEmpty)
+                                Text(
+                                  transaction.notes,
+                                  style: const TextStyle(fontStyle: FontStyle.italic),
+                                ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Tutup'),
+            ),
+          ],
+        );
+      },
     );
   }
 
@@ -1313,9 +1620,8 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
       body: IndexedStack(
         index: _selectedIndex,
         children: [
-          _buildOverview(),
-          _buildCategories(),
           _buildTransactions(),
+          _buildSavingsPlans(),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
@@ -1327,16 +1633,12 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
         },
         items: const [
           BottomNavigationBarItem(
-            icon: Icon(Icons.dashboard),
-            label: 'Overview',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.category),
-            label: 'Kategori',
-          ),
-          BottomNavigationBarItem(
             icon: Icon(Icons.receipt),
             label: 'Transaksi',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.savings),
+            label: 'Rencana Menabung',
           ),
         ],
       ),
@@ -1348,9 +1650,9 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
           ),
         ),
         child: FloatingActionButton.extended(
-          onPressed: _selectedIndex == 1 ? _showAddCategoryDialog : _showAddTransactionDialog,
+          onPressed: _selectedIndex == 0 ? _showAddTransactionDialog : _showAddSavingsPlanDialog,
           icon: const Icon(Icons.add),
-          label: Text(_selectedIndex == 1 ? 'Tambah Kategori' : 'Tambah Transaksi'),
+          label: Text(_selectedIndex == 0 ? 'Tambah Transaksi' : 'Tambah Rencana'),
           backgroundColor: Theme.of(context).primaryColor,
           foregroundColor: Colors.white,
         ),
