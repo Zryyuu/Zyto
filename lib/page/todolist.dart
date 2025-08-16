@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'dart:convert';
 import 'dart:async';
-import 'main.dart'; // Import for accessing flutterLocalNotificationsPlugin
+import '../main.dart'; // Import for accessing flutterLocalNotificationsPlugin
+import '../services/data_service.dart';
 
 // Todo Models
 class TodoSubtask {
@@ -146,11 +145,15 @@ class TodoListScreen extends StatefulWidget {
 }
 
 class _TodoListScreenState extends State<TodoListScreen>
-    with TickerProviderStateMixin {
+    with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
   final List<TodoItem> _todoItems = [];
   late AnimationController _fabAnimationController;
   bool _isLoading = true;
   Timer? _notificationTimer;
+  final DataService _dataService = DataService.instance;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -229,29 +232,40 @@ class _TodoListScreenState extends State<TodoListScreen>
 
   Future<void> _loadTodoItems() async {
     try {
-      SharedPreferences prefs = await SharedPreferences.getInstance();
-      List<String>? todoStrings = prefs.getStringList('todo_items');
+      final todoItems = await _dataService.loadTodoItems();
       setState(() {
         _todoItems.clear();
-        for (String todoString in todoStrings ?? []) {
-          Map<String, dynamic> todoMap = json.decode(todoString);
-          _todoItems.add(TodoItem.fromJson(todoMap));
-        }
+        _todoItems.addAll(todoItems);
         _isLoading = false;
       });
     } catch (e) {
       setState(() {
         _isLoading = false;
       });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading todos: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
   Future<void> _saveTodoItems() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    List<String> todoStrings = _todoItems
-        .map((item) => json.encode(item.toJson()))
-        .toList();
-    await prefs.setStringList('todo_items', todoStrings);
+    try {
+      await _dataService.saveTodoItems(_todoItems);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error saving todos: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
   
   void _removeTodoItem(int index) {
@@ -1175,7 +1189,7 @@ class _TodoListScreenState extends State<TodoListScreen>
                     ),
                   if (todoItem.notes.isNotEmpty)
                     Text(
-                      '📝 ${todoItem.notes.length > 30 ? '${todoItem.notes.substring(0, 30)}...' : todoItem.notes}',
+                      'ðŸ“ ${todoItem.notes.length > 30 ? '${todoItem.notes.substring(0, 30)}...' : todoItem.notes}',
                       style: TextStyle(
                         fontSize: 12,
                         color: Colors.blue[600],
@@ -1362,6 +1376,8 @@ class _TodoListScreenState extends State<TodoListScreen>
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required for AutomaticKeepAliveClientMixin
+    
     if (_isLoading) {
       return const Center(
         child: CircularProgressIndicator(),
@@ -1405,7 +1421,7 @@ class _TodoListScreenState extends State<TodoListScreen>
                   ),
                   if (_activeSubtasksCount > 0 || _overdueSubtasksCount > 0)
                     Text(
-                      'Subtask: ${_activeSubtasksCount > 0 ? '$_activeSubtasksCount aktif' : ''}${_activeSubtasksCount > 0 && _overdueSubtasksCount > 0 ? ' • ' : ''}${_overdueSubtasksCount > 0 ? '$_overdueSubtasksCount terlambat' : ''}',
+                      'Subtask: ${_activeSubtasksCount > 0 ? '$_activeSubtasksCount aktif' : ''}${_activeSubtasksCount > 0 && _overdueSubtasksCount > 0 ? ' â€¢ ' : ''}${_overdueSubtasksCount > 0 ? '$_overdueSubtasksCount terlambat' : ''}',
                       style: const TextStyle(
                         color: Colors.white70,
                         fontSize: 12,

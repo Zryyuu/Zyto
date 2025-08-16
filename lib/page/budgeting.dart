@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'dart:convert';
 import 'dart:async';
+import '../services/data_service.dart';
 
 // Savings Plan Models
 class SavingsPlan {
@@ -64,7 +63,7 @@ class SavingsPlan {
       currentAmount: json['currentAmount'].toDouble(),
       targetDate: DateTime.parse(json['targetDate']),
       description: json['description'] ?? '',
-      icon: IconData(json['icon'], fontFamily: 'MaterialIcons'),
+      icon: Icons.savings,
       color: Color(json['color']),
       isCompleted: json['isCompleted'] ?? false,
     );
@@ -160,13 +159,17 @@ class BudgetScreen extends StatefulWidget {
   State<BudgetScreen> createState() => _BudgetScreenState();
 }
 
-class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMixin {
-  final List<Transaction> _transactions = [];
-  final List<SavingsPlan> _savingsPlans = [];
-  final List<SavingsTransaction> _savingsTransactions = [];
+class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMixin, AutomaticKeepAliveClientMixin {
+  List<Transaction> _transactions = [];
+  List<SavingsPlan> _savingsPlans = [];
+  List<SavingsTransaction> _savingsTransactions = [];
   late AnimationController _fabAnimationController;
   bool _isLoading = true;
   int _selectedIndex = 0; // 0: Transactions, 1: Savings Plans
+  final DataService _dataService = DataService.instance;
+
+  @override
+  bool get wantKeepAlive => true;
 
   @override
   void initState() {
@@ -186,68 +189,43 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
 
   Future<void> _loadBudgetData() async {
     try {
-      SharedPreferences prefs = await SharedPreferences.getInstance();
+      final transactions = await _dataService.loadBudgetTransactions();
+      final savingsPlans = await _dataService.loadSavingsPlans();
+      final savingsTransactions = await _dataService.loadSavingsTransactions();
       
-      // Load transactions
-      List<String>? transactionStrings = prefs.getStringList('budget_transactions');
-      if (transactionStrings != null) {
-        _transactions.clear();
-        for (String transactionString in transactionStrings) {
-          Map<String, dynamic> transactionMap = json.decode(transactionString);
-          _transactions.add(Transaction.fromJson(transactionMap));
-        }
+      if (mounted) {
+        setState(() {
+          _transactions = transactions;
+          _savingsPlans = savingsPlans;
+          _savingsTransactions = savingsTransactions;
+          _isLoading = false; // Set loading to false after data is loaded
+        });
       }
-      
-      // Load savings plans
-      List<String>? savingsStrings = prefs.getStringList('savings_plans');
-      if (savingsStrings != null) {
-        _savingsPlans.clear();
-        for (String savingsString in savingsStrings) {
-          Map<String, dynamic> savingsMap = json.decode(savingsString);
-          _savingsPlans.add(SavingsPlan.fromJson(savingsMap));
-        }
-      }
-      
-      // Load savings transactions
-      List<String>? savingsTransactionStrings = prefs.getStringList('savings_transactions');
-      if (savingsTransactionStrings != null) {
-        _savingsTransactions.clear();
-        for (String savingsTransactionString in savingsTransactionStrings) {
-          Map<String, dynamic> savingsTransactionMap = json.decode(savingsTransactionString);
-          _savingsTransactions.add(SavingsTransaction.fromJson(savingsTransactionMap));
-        }
-      }
-      
-      setState(() {
-        _isLoading = false;
-      });
     } catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _isLoading = false; // Set loading to false even on error
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading budget data: $e')),
+        );
+      }
     }
   }
 
   Future<void> _saveBudgetData() async {
-    SharedPreferences prefs = await SharedPreferences.getInstance();
-    
-    // Save transactions
-    List<String> transactionStrings = _transactions
-        .map((transaction) => json.encode(transaction.toJson()))
-        .toList();
-    await prefs.setStringList('budget_transactions', transactionStrings);
-    
-    // Save savings plans
-    List<String> savingsStrings = _savingsPlans
-        .map((plan) => json.encode(plan.toJson()))
-        .toList();
-    await prefs.setStringList('savings_plans', savingsStrings);
-    
-    // Save savings transactions
-    List<String> savingsTransactionStrings = _savingsTransactions
-        .map((transaction) => json.encode(transaction.toJson()))
-        .toList();
-    await prefs.setStringList('savings_transactions', savingsTransactionStrings);
+    try {
+      // Save sequentially to avoid race conditions
+      await _dataService.saveBudgetTransactions(_transactions);
+      await _dataService.saveSavingsPlans(_savingsPlans);
+      await _dataService.saveSavingsTransactions(_savingsTransactions);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error saving budget data: $e')),
+        );
+      }
+    }
   }
 
   void _addTransaction(Transaction transaction) {
@@ -1364,6 +1342,8 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
 
   @override
   Widget build(BuildContext context) {
+    super.build(context); // Required for AutomaticKeepAliveClientMixin
+    
     if (_isLoading) {
       return const Center(child: CircularProgressIndicator());
     }
