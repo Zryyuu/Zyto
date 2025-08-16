@@ -182,14 +182,31 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) async {
+        if (!didPop) {
+          // Set guest mode and navigate back to main screen
+          await LocalStorageService.instance.setGuestMode(true);
+          if (context.mounted) {
+            Navigator.of(context).pushReplacementNamed('/');
+          }
+        }
+      },
+      child: Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.black87),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () async {
+            // Set guest mode and navigate back to main screen
+            await LocalStorageService.instance.setGuestMode(true);
+            if (context.mounted) {
+              Navigator.of(context).pushReplacementNamed('/');
+            }
+          },
         ),
         title: const Text(
           'Masuk',
@@ -433,6 +450,7 @@ class _LoginScreenState extends State<LoginScreen> {
             ),
           ),
         ),
+      ),
       ),
     );
   }
