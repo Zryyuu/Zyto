@@ -469,10 +469,6 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
       Icons.phone_android, Icons.laptop, Icons.school, Icons.medical_services,
     ];
 
-    final List<Color> colors = [
-      Colors.blue, Colors.green, Colors.orange, Colors.purple,
-      Colors.red, Colors.teal, Colors.indigo, Colors.pink,
-    ];
 
     showDialog(
       context: context,
@@ -573,38 +569,6 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
                               ),
                             ),
                             child: Icon(icon, color: isSelected ? selectedColor : Colors.grey[600]),
-                          ),
-                        );
-                      }).toList(),
-                    ),
-                    const SizedBox(height: 16),
-                    
-                    // Color selection
-                    const Text('Pilih Warna:', style: TextStyle(fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 8),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: colors.map((color) {
-                        final isSelected = color == selectedColor;
-                        return InkWell(
-                          onTap: () {
-                            setDialogState(() {
-                              selectedColor = color;
-                            });
-                          },
-                          child: Container(
-                            width: 40,
-                            height: 40,
-                            decoration: BoxDecoration(
-                              color: color,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: isSelected ? Colors.black : Colors.transparent,
-                                width: 3,
-                              ),
-                            ),
-                            child: isSelected ? const Icon(Icons.check, color: Colors.white) : null,
                           ),
                         );
                       }).toList(),
@@ -806,44 +770,89 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
                     ],
                   ),
                 ),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      '${plan.progress.toStringAsFixed(1)}%',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: plan.isCompleted ? Colors.green : plan.color,
-                      ),
-                    ),
-                    Text(
-                      _formatCurrency(plan.remaining),
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: plan.remaining <= 0 ? Colors.green : Colors.orange,
-                      ),
-                    ),
-                  ],
-                ),
-                if (!plan.isCompleted && plan.dailySavingsNeeded > 0)
-                  Column(
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.grey[50],
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: Colors.grey[200]!),
+                  ),
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
+                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      Text(
-                        'Per hari:',
-                        style: TextStyle(fontSize: 10, color: Colors.grey[500]),
-                      ),
-                      Text(
-                        _formatCurrency(plan.dailySavingsNeeded),
-                        style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                          color: plan.color,
+                      // Progress percentage
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: plan.isCompleted ? Colors.green : plan.color,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '${plan.progress.toStringAsFixed(1)}%',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.white,
+                          ),
                         ),
                       ),
+                      const SizedBox(height: 8),
+                      // Remaining amount
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            'Sisa:',
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: Colors.grey[600],
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          Text(
+                            _formatCurrency(plan.remaining),
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: plan.remaining <= 0 ? Colors.green : Colors.orange[700],
+                            ),
+                          ),
+                        ],
+                      ),
+                      // Daily savings needed
+                      if (!plan.isCompleted && plan.dailySavingsNeeded > 0) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          height: 1,
+                          color: Colors.grey[300],
+                        ),
+                        const SizedBox(height: 8),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text(
+                              'Per hari:',
+                              style: TextStyle(
+                                fontSize: 10,
+                                color: Colors.grey[600],
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            Text(
+                              _formatCurrency(plan.dailySavingsNeeded),
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: plan.color,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
+                ),
               ],
             ),
             const SizedBox(height: 16),

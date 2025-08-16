@@ -406,8 +406,8 @@ class _MainScreenState extends State<MainScreen> with SingleTickerProviderStateM
     return Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
+        centerTitle: true,
         title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text(
               'Task & Budget Manager',
@@ -415,7 +415,7 @@ class _MainScreenState extends State<MainScreen> with SingleTickerProviderStateM
             ),
             Text(
               widget.isGuestMode 
-                ? 'Mode Tamu (Data Lokal)'
+                ? 'Mode Tamu'
                 : 'Halo, ${_authService.userDisplayName}',
               style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
             ),
@@ -424,12 +424,7 @@ class _MainScreenState extends State<MainScreen> with SingleTickerProviderStateM
         backgroundColor: Theme.of(context).colorScheme.inversePrimary,
         actions: [
           if (widget.isGuestMode) ...[
-            // Guest mode actions
-            IconButton(
-              icon: const Icon(Icons.login),
-              onPressed: () => _showLoginPromptDialog(),
-              tooltip: 'Login untuk sinkronisasi data',
-            ),
+            // Guest mode actions - only popup menu
             PopupMenuButton<String>(
               icon: const Icon(Icons.more_vert),
               itemBuilder: (context) => [
