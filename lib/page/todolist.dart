@@ -70,7 +70,7 @@ class TodoItem {
   List<TodoSubtask> subtasks;
   bool isExpanded;
   String priority;
-  List<String> days;
+  DateTime? dueDate;
 
   TodoItem({
     required this.task,
@@ -80,10 +80,9 @@ class TodoItem {
     List<TodoSubtask>? subtasks,
     this.isExpanded = false,
     this.priority = 'Sedang',
-    List<String>? days,
+    this.dueDate,
   }) : createdAt = createdAt ?? DateTime.now(),
-       subtasks = subtasks ?? [],
-       days = days ?? [];
+       subtasks = subtasks ?? [];
 
   Map<String, dynamic> toJson() {
     return {
@@ -94,7 +93,7 @@ class TodoItem {
       'subtasks': subtasks.map((subtask) => subtask.toJson()).toList(),
       'isExpanded': isExpanded,
       'priority': priority,
-      'days': days,
+      'dueDate': dueDate?.toIso8601String(),
     };
   }
 
@@ -109,7 +108,7 @@ class TodoItem {
           .toList() ?? [],
       isExpanded: json['isExpanded'] ?? false,
       priority: json['priority'] ?? 'Sedang',
-      days: (json['days'] as List<dynamic>?)?.cast<String>() ?? [],
+      dueDate: json['dueDate'] != null ? DateTime.parse(json['dueDate']) : null,
     );
   }
 
@@ -130,9 +129,27 @@ class TodoItem {
     }
   }
   
-  String get daysString {
-    if (days.isEmpty) return 'Semua hari';
-    return days.join(', ');
+  String get dueDateString {
+    if (dueDate == null) return 'Tidak ada deadline';
+    final now = DateTime.now();
+    final difference = dueDate!.difference(now).inDays;
+    
+    if (difference == 0) return 'Hari ini';
+    if (difference == 1) return 'Besok';
+    if (difference == -1) return 'Kemarin';
+    if (difference > 1) return '$difference hari lagi';
+    if (difference < -1) return '${difference.abs()} hari yang lalu';
+    
+    return _formatDate(dueDate!);
+  }
+
+  bool get isOverdue {
+    if (dueDate == null) return false;
+    return DateTime.now().isAfter(dueDate!) && !isCompleted;
+  }
+
+  String _formatDate(DateTime date) {
+    return '${date.day}/${date.month}/${date.year}';
   }
 }
 
@@ -365,9 +382,8 @@ class _TodoListScreenState extends State<TodoListScreen>
     final TextEditingController subtaskController = TextEditingController();
     final List<TodoSubtask> tempSubtasks = [];
     String selectedPriority = 'Sedang';
-    List<String> selectedDays = [];
+    DateTime? selectedDueDate;
     
-    final List<String> weekDays = ['Senin', 'Selasa', 'Rabu', 'Kamis', 'Jumat', 'Sabtu', 'Minggu'];
     final List<String> priorities = ['Rendah', 'Sedang', 'Tinggi'];
 
     showDialog(
@@ -450,32 +466,55 @@ class _TodoListScreenState extends State<TodoListScreen>
                       ),
                       const SizedBox(height: 16),
                       
-                      // Days Section
-                      const Text('Hari (opsional):', style: TextStyle(fontWeight: FontWeight.bold)),
+                      
+                      // Due Date Section
+                      const Text('Tanggal Deadline (opsional):', style: TextStyle(fontWeight: FontWeight.bold)),
                       const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: weekDays.map((day) {
-                          final isSelected = selectedDays.contains(day);
-                          return FilterChip(
-                            label: Text(day),
-                            selected: isSelected,
-                            onSelected: (selected) {
-                              setDialogState(() {
-                                if (selected) {
-                                  selectedDays.add(day);
-                                } else {
-                                  selectedDays.remove(day);
-                                }
-                              });
-                            },
-                            selectedColor: Theme.of(context).primaryColor.withValues(alpha: 0.3),
+                      InkWell(
+                        onTap: () async {
+                          final date = await showDatePicker(
+                            context: context,
+                            initialDate: selectedDueDate ?? DateTime.now(),
+                            firstDate: DateTime.now(),
+                            lastDate: DateTime.now().add(const Duration(days: 365)),
                           );
-                        }).toList(),
+                          if (date != null) {
+                            setDialogState(() {
+                              selectedDueDate = date;
+                            });
+                          }
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: Colors.grey),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.calendar_today),
+                              const SizedBox(width: 8),
+                              Text(
+                                selectedDueDate != null 
+                                    ? '${selectedDueDate!.day}/${selectedDueDate!.month}/${selectedDueDate!.year}'
+                                    : 'Pilih tanggal deadline',
+                              ),
+                              const Spacer(),
+                              if (selectedDueDate != null)
+                                IconButton(
+                                  icon: const Icon(Icons.clear, size: 20),
+                                  onPressed: () {
+                                    setDialogState(() {
+                                      selectedDueDate = null;
+                                    });
+                                  },
+                                ),
+                            ],
+                          ),
+                        ),
                       ),
                       const SizedBox(height: 16),
-                      
+
                       // Notes Section
                       const Text('Catatan (opsional):', style: TextStyle(fontWeight: FontWeight.bold)),
                       const SizedBox(height: 8),
@@ -608,7 +647,7 @@ class _TodoListScreenState extends State<TodoListScreen>
                         notes: notesController.text,
                         subtasks: List.from(tempSubtasks),
                         priority: selectedPriority,
-                        days: List.from(selectedDays),
+                        dueDate: selectedDueDate,
                       );
                       
                       setState(() {
@@ -784,13 +823,14 @@ class _TodoListScreenState extends State<TodoListScreen>
                                 Text('Prioritas: ${todoItem.priority}'),
                               ],
                             ),
-                            if (todoItem.days.isNotEmpty) ...[
+                            if (todoItem.dueDate != null) ...[
                               const SizedBox(height: 4),
                               Row(
                                 children: [
-                                  const Icon(Icons.calendar_today, size: 16, color: Colors.blue),
+                                  Icon(Icons.calendar_today, size: 16, color: todoItem.isOverdue ? Colors.red : Colors.blue),
                                   const SizedBox(width: 8),
-                                  Text('Hari: ${todoItem.daysString}'),
+                                  Text('Deadline: ${todoItem.dueDateString}', 
+                                    style: TextStyle(color: todoItem.isOverdue ? Colors.red : null)),
                                 ],
                               ),
                             ],
@@ -1167,14 +1207,14 @@ class _TodoListScreenState extends State<TodoListScreen>
                       ),
                     ],
                   ),
-                  if (todoItem.days.isNotEmpty)
+                  if (todoItem.dueDate != null)
                     Row(
                       children: [
-                        Icon(Icons.calendar_today, size: 12, color: Colors.blue[600]),
+                        Icon(Icons.calendar_today, size: 12, color: todoItem.isOverdue ? Colors.red : Colors.blue[600]),
                         const SizedBox(width: 4),
                         Text(
-                          'Hari: ${todoItem.daysString}',
-                          style: TextStyle(fontSize: 12, color: Colors.blue[600]),
+                          'Deadline: ${todoItem.dueDateString}',
+                          style: TextStyle(fontSize: 12, color: todoItem.isOverdue ? Colors.red : Colors.blue[600]),
                         ),
                       ],
                     ),
