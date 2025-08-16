@@ -296,7 +296,6 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
     final TextEditingController titleController = TextEditingController();
     final TextEditingController amountController = TextEditingController();
     final TextEditingController notesController = TextEditingController();
-    final TextEditingController categoryController = TextEditingController();
     bool isIncome = false;
     DateTime selectedDate = DateTime.now();
 
@@ -369,15 +368,6 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
                       ),
                       const SizedBox(height: 16),
                       
-                      // Category
-                      TextField(
-                        controller: categoryController,
-                        decoration: const InputDecoration(
-                          labelText: 'Kategori',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
                       
                       // Date
                       InkWell(
@@ -432,15 +422,14 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
                 ElevatedButton(
                   onPressed: () {
                     if (titleController.text.trim().isNotEmpty &&
-                        amountController.text.trim().isNotEmpty &&
-                        categoryController.text.trim().isNotEmpty) {
+                        amountController.text.trim().isNotEmpty) {
                       final amount = double.tryParse(amountController.text.trim());
                       if (amount != null && amount > 0) {
                         final transaction = Transaction(
                           id: DateTime.now().millisecondsSinceEpoch.toString(),
                           title: titleController.text.trim(),
                           amount: amount,
-                          category: categoryController.text.trim(),
+                          category: isIncome ? 'Pemasukan' : 'Pengeluaran',
                           date: selectedDate,
                           isIncome: isIncome,
                           notes: notesController.text.trim(),
