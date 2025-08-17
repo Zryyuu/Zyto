@@ -398,10 +398,18 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               side: BorderSide(color: Colors.grey[300]!),
                             ),
-                            icon: Icon(
-                              Icons.login,
-                              color: Colors.red[600],
-                              size: 20,
+                            icon: Image.asset(
+                              '../../assets/icon/google.png',
+                              width: 20,
+                              height: 20,
+                              fit: BoxFit.contain,
+                              errorBuilder: (context, error, stackTrace) {
+                                return const Icon(
+                                  Icons.account_circle,
+                                  size: 20,
+                                  color: Colors.blue,
+                                );
+                              },
                             ),
                             label: const Text(
                               'Masuk dengan Google',
