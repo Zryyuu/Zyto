@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "724958697708",
+    "project_id": "todolist-5c453",
+    "storage_bucket": "todolist-5c453.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:724958697708:android:3ed8e049b95210bee92dc9",
+        "android_client_info": {
+          "package_name": "com.android.zyto"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "724958697708-8lptpnumj9vbf734bpjmt7neutd1etni.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.android.zyto",
+            "certificate_hash": "f81c5c02ff394d7d25a5e407c2a0a6de45144214"
+          }
+        },
+        {
+          "client_id": "724958697708-09ucb8oks2h9b0g26ehf7bqu9cdaqnec.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBs8sF2nVNsW6gJT6m_YRna8nO61syPD70"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "724958697708-09ucb8oks2h9b0g26ehf7bqu9cdaqnec.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
