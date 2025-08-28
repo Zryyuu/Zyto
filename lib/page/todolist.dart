@@ -1,17 +1,21 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/scheduler.dart' as scheduler;
+
 import 'dart:async';
-import '../main.dart'; // Import for accessing flutterLocalNotificationsPlugin
 import '../services/data_service.dart';
+import './todo_filters.dart';
+ 
 
 // Todo Models
 class TodoSubtask {
+  int id;
   String task;
   bool isCompleted;
   DateTime? scheduledTime;
   DateTime? endTime;
 
   TodoSubtask({
+    required this.id,
     required this.task,
     this.isCompleted = false,
     this.scheduledTime,
@@ -20,23 +24,29 @@ class TodoSubtask {
 
   Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'task': task,
       'isCompleted': isCompleted,
       'scheduledTime': scheduledTime?.toIso8601String(),
       'endTime': endTime?.toIso8601String(),
     };
   }
-
+ 
+  
   factory TodoSubtask.fromJson(Map<String, dynamic> json) {
+    final DateTime? sched = json['scheduledTime'] != null 
+        ? DateTime.parse(json['scheduledTime']) 
+        : null;
+    final DateTime? end = json['endTime'] != null 
+        ? DateTime.parse(json['endTime']) 
+        : null;
+    final int computedId = _computeStableId(json['task'] ?? '', sched, end);
     return TodoSubtask(
+      id: (json['id'] is int) ? json['id'] as int : computedId,
       task: json['task'],
       isCompleted: json['isCompleted'],
-      scheduledTime: json['scheduledTime'] != null 
-          ? DateTime.parse(json['scheduledTime']) 
-          : null,
-      endTime: json['endTime'] != null 
-          ? DateTime.parse(json['endTime']) 
-          : null,
+      scheduledTime: sched,
+      endTime: end,
     );
   }
 
@@ -59,6 +69,23 @@ class TodoSubtask {
     if (scheduledTime == null) return false;
     final now = DateTime.now();
     return now.isAfter(scheduledTime!) && (endTime == null || now.isBefore(endTime!));
+  }
+
+  static int _computeStableId(String task, DateTime? scheduledTime, DateTime? endTime) {
+    // Deterministic simple checksum based on content and times
+    int sum = 0;
+    for (final c in task.codeUnits) {
+      sum = (sum * 31 + c) & 0x7FFFFFFF;
+    }
+    if (scheduledTime != null) {
+      sum ^= scheduledTime.millisecondsSinceEpoch & 0x7FFFFFFF;
+    }
+    if (endTime != null) {
+      sum ^= (endTime.millisecondsSinceEpoch >> 1) & 0x7FFFFFFF;
+    }
+    // Ensure non-zero positive int
+    if (sum == 0) sum = DateTime.now().microsecondsSinceEpoch & 0x7FFFFFFF;
+    return sum;
   }
 }
 
@@ -166,8 +193,9 @@ class _TodoListScreenState extends State<TodoListScreen>
   final List<TodoItem> _todoItems = [];
   late AnimationController _fabAnimationController;
   bool _isLoading = true;
-  Timer? _notificationTimer;
+  Timer? _uiTimer;
   final DataService _dataService = DataService.instance;
+  int _tabIndex = 0;
 
   @override
   bool get wantKeepAlive => true;
@@ -180,72 +208,24 @@ class _TodoListScreenState extends State<TodoListScreen>
       vsync: this,
     );
     _loadTodoItems();
-    _startNotificationTimer();
+    _startUiTimer();
   }
 
   @override
   void dispose() {
     _fabAnimationController.dispose();
-    _notificationTimer?.cancel();
+    _uiTimer?.cancel();
     super.dispose();
   }
 
-  void _startNotificationTimer() {
-    _notificationTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
-      _checkAndSendNotifications();
+  void _startUiTimer() {
+    // Refresh UI every minute so time-based badges/countdowns update automatically
+    _uiTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
+      if (mounted) setState(() {});
     });
   }
 
-  void _checkAndSendNotifications() {
-    final now = DateTime.now();
-    
-    for (var todoItem in _todoItems) {
-      for (var subtask in todoItem.subtasks) {
-        if (subtask.scheduledTime != null && !subtask.isCompleted) {
-          final startDiff = subtask.scheduledTime!.difference(now).inMinutes;
-          if (startDiff == 10 || startDiff == 5) {
-            _showNotification(
-              'Subtask akan dimulai',
-              'Subtask "${subtask.task}" akan dimulai dalam $startDiff menit',
-              subtask.hashCode,
-            );
-          }
-        }
-        
-        if (subtask.endTime != null && !subtask.isCompleted) {
-          final endDiff = subtask.endTime!.difference(now).inMinutes;
-          if (endDiff == 10 || endDiff == 5) {
-            _showNotification(
-              'Subtask akan berakhir',
-              'Subtask "${subtask.task}" akan berakhir dalam $endDiff menit',
-              subtask.hashCode + 1000,
-            );
-          }
-        }
-      }
-    }
-  }
-
-  Future<void> _showNotification(String title, String body, int id) async {
-    const AndroidNotificationDetails androidPlatformChannelSpecifics =
-        AndroidNotificationDetails(
-      'todo_timer_channel',
-      'Todo Timer Notifications',
-      channelDescription: 'Notifications for todo timer reminders',
-      importance: Importance.high,
-      priority: Priority.high,
-    );
-    
-    const NotificationDetails platformChannelSpecifics =
-        NotificationDetails(android: androidPlatformChannelSpecifics);
-    
-    await flutterLocalNotificationsPlugin.show(
-      id,
-      title,
-      body,
-      platformChannelSpecifics,
-    );
-  }
+  // All notification scheduling removed; UI will just reflect time-based states.
 
   Future<void> _loadTodoItems() async {
     try {
@@ -318,28 +298,6 @@ class _TodoListScreenState extends State<TodoListScreen>
     _saveTodoItems();
   }
 
-  void _addSubtask(int todoIndex, String subtaskText, {DateTime? scheduledTime, DateTime? endTime}) {
-    if (subtaskText.trim().isNotEmpty) {
-      setState(() {
-        _todoItems[todoIndex].subtasks.add(
-          TodoSubtask(
-            task: subtaskText.trim(),
-            scheduledTime: scheduledTime,
-            endTime: endTime,
-          )
-        );
-      });
-      _saveTodoItems();
-    }
-  }
-
-  void _removeSubtask(int todoIndex, int subtaskIndex) {
-    setState(() {
-      _todoItems[todoIndex].subtasks.removeAt(subtaskIndex);
-    });
-    _saveTodoItems();
-  }
-
   void _updateNotes(int index, String notes) {
     setState(() {
       _todoItems[index].notes = notes;
@@ -374,6 +332,189 @@ class _TodoListScreenState extends State<TodoListScreen>
     if (time == null) return null;
     
     return DateTime(date.year, date.month, date.day, time.hour, time.minute);
+  }
+
+  Future<void> _showSubtaskTimerDialog(
+    BuildContext context,
+    String taskText,
+    Function(TodoSubtask) onAdd,
+  ) async {
+    DateTime? start;
+    DateTime? end;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setStateDialog) {
+            return AlertDialog(
+              title: const Text('Pengaturan Waktu Subtask'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Waktu Mulai'),
+                    subtitle: Text(start != null ? _formatDateTime(start!) : 'Tidak ditetapkan'),
+                    trailing: TextButton(
+                      onPressed: () async {
+                        final picked = await _selectDateTime(context, initialDate: start);
+                        if (picked != null) {
+                          setStateDialog(() => start = picked);
+                        }
+                      },
+                      child: const Text('Pilih'),
+                    ),
+                  ),
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    title: const Text('Waktu Selesai'),
+                    subtitle: Text(end != null ? _formatDateTime(end!) : 'Tidak ditetapkan'),
+                    trailing: TextButton(
+                      onPressed: () async {
+                        final picked = await _selectDateTime(context, initialDate: end);
+                        if (picked != null) {
+                          setStateDialog(() => end = picked);
+                        }
+                      },
+                      child: const Text('Pilih'),
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Batal'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    onAdd(TodoSubtask(
+                      id: DateTime.now().microsecondsSinceEpoch & 0x7FFFFFFF,
+                      task: taskText,
+                      scheduledTime: start,
+                      endTime: end,
+                    ));
+                    Navigator.pop(ctx);
+                  },
+                  child: const Text('Simpan'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showDetailDialog(TodoItem todoItem, int index) {
+    final TextEditingController notesController = TextEditingController(text: todoItem.notes);
+    String selectedPriority = todoItem.priority;
+    DateTime? selectedDueDate = todoItem.dueDate;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: Text('Detail: ${todoItem.task}', style: const TextStyle(fontWeight: FontWeight.bold)),
+              content: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('Catatan:'),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: notesController,
+                      maxLines: 3,
+                      decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'Tambahkan catatan...'),
+                      onChanged: (v) => _updateNotes(index, v),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text('Prioritas:'),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      initialValue: selectedPriority,
+                      items: const [
+                        DropdownMenuItem(value: 'Rendah', child: Text('Rendah')),
+                        DropdownMenuItem(value: 'Sedang', child: Text('Sedang')),
+                        DropdownMenuItem(value: 'Tinggi', child: Text('Tinggi')),
+                      ],
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setState(() {
+                          _todoItems[index].priority = v;
+                        });
+                        setDialogState(() => selectedPriority = v);
+                        _saveTodoItems();
+                      },
+                    ),
+                    const SizedBox(height: 16),
+                    const Text('Deadline (opsional):'),
+                    const SizedBox(height: 8),
+                    InkWell(
+                      onTap: () async {
+                        final picked = await showDatePicker(
+                          context: context,
+                          initialDate: selectedDueDate ?? DateTime.now(),
+                          firstDate: DateTime.now().subtract(const Duration(days: 365)),
+                          lastDate: DateTime.now().add(const Duration(days: 365)),
+                        );
+                        if (picked != null) {
+                          setState(() {
+                            _todoItems[index].dueDate = picked;
+                          });
+                          setDialogState(() => selectedDueDate = picked);
+                          _saveTodoItems();
+                        }
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          border: Border.all(color: Colors.grey[300]!),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.calendar_today),
+                            const SizedBox(width: 8),
+                            Text(selectedDueDate != null ? _formatDate(selectedDueDate!) : 'Pilih tanggal'),
+                            const Spacer(),
+                            if (selectedDueDate != null)
+                              IconButton(
+                                icon: const Icon(Icons.clear, size: 20),
+                                onPressed: () {
+                                  setState(() {
+                                    _todoItems[index].dueDate = null;
+                                  });
+                                  setDialogState(() => selectedDueDate = null);
+                                  _saveTodoItems();
+                                },
+                              ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Tutup'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    ).then((_) {
+      notesController.dispose();
+    });
   }
 
   void _showAddDialog() {
@@ -421,7 +562,7 @@ class _TodoListScreenState extends State<TodoListScreen>
                       const Text('Prioritas:', style: TextStyle(fontWeight: FontWeight.bold)),
                       const SizedBox(height: 8),
                       DropdownButtonFormField<String>(
-                        value: selectedPriority,
+                        initialValue: selectedPriority,
                         decoration: const InputDecoration(
                           border: OutlineInputBorder(),
                         ),
@@ -465,7 +606,6 @@ class _TodoListScreenState extends State<TodoListScreen>
                         },
                       ),
                       const SizedBox(height: 16),
-                      
                       
                       // Due Date Section
                       const Text('Tanggal Deadline (opsional):', style: TextStyle(fontWeight: FontWeight.bold)),
@@ -615,10 +755,30 @@ class _TodoListScreenState extends State<TodoListScreen>
                                 ),
                                 trailing: IconButton(
                                   icon: const Icon(Icons.delete_outline, size: 20, color: Colors.red),
-                                  onPressed: () {
-                                    setDialogState(() {
-                                      tempSubtasks.removeAt(subtaskIndex);
-                                    });
+                                  onPressed: () async {
+                                    final confirm = await showDialog<bool>(
+                                      context: context,
+                                      builder: (context) => AlertDialog(
+                                        title: const Text('Hapus Subtask'),
+                                        content: Text('Yakin ingin menghapus subtask "${subtask.task}"?'),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () => Navigator.pop(context, false),
+                                            child: const Text('Batal'),
+                                          ),
+                                          ElevatedButton(
+                                            onPressed: () => Navigator.pop(context, true),
+                                            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                                            child: const Text('Hapus'),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                    if (confirm == true) {
+                                      setDialogState(() {
+                                        tempSubtasks.removeAt(subtaskIndex);
+                                      });
+                                    }
                                   },
                                 ),
                               );
@@ -632,9 +792,6 @@ class _TodoListScreenState extends State<TodoListScreen>
               actions: [
                 TextButton(
                   onPressed: () {
-                    taskController.dispose();
-                    notesController.dispose();
-                    subtaskController.dispose();
                     Navigator.of(context).pop();
                   },
                   child: const Text('Batal'),
@@ -659,9 +816,6 @@ class _TodoListScreenState extends State<TodoListScreen>
                         _fabAnimationController.reverse();
                       });
                       
-                      taskController.dispose();
-                      notesController.dispose();
-                      subtaskController.dispose();
                       Navigator.of(context).pop();
                       
                       if (context.mounted) {
@@ -690,328 +844,12 @@ class _TodoListScreenState extends State<TodoListScreen>
           },
         );
       },
-    );
-  }
-
-  Future<void> _showSubtaskTimerDialog(BuildContext context, String taskText, Function(TodoSubtask) onAdd) async {
-    DateTime? scheduledTime;
-    DateTime? endTime;
-    
-    await showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              title: const Text('Set Timer untuk Subtask'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text('Subtask: $taskText', style: const TextStyle(fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 16),
-                  ElevatedButton.icon(
-                    onPressed: () async {
-                      final dateTime = await _selectDateTime(context, initialDate: scheduledTime);
-                      if (dateTime != null) {
-                        setDialogState(() {
-                          scheduledTime = dateTime;
-                        });
-                      }
-                    },
-                    icon: const Icon(Icons.access_time),
-                    label: Text(
-                      scheduledTime != null 
-                          ? 'Mulai: ${_formatDateTime(scheduledTime!)}'
-                          : 'Set Waktu Mulai (Opsional)',
-                    ),
-                  ),
-                  if (scheduledTime != null) ...[
-                    const SizedBox(height: 8),
-                    ElevatedButton.icon(
-                      onPressed: () async {
-                        final dateTime = await _selectDateTime(
-                          context, 
-                          initialDate: endTime ?? scheduledTime!.add(const Duration(hours: 1))
-                        );
-                        if (dateTime != null && dateTime.isAfter(scheduledTime!)) {
-                          setDialogState(() {
-                            endTime = dateTime;
-                          });
-                        }
-                      },
-                      icon: const Icon(Icons.timer_off),
-                      label: Text(
-                        endTime != null 
-                            ? 'Berakhir: ${_formatDateTime(endTime!)}'
-                            : 'Set Waktu Berakhir (Opsional)',
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Batal'),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    onAdd(TodoSubtask(
-                      task: taskText,
-                      scheduledTime: scheduledTime,
-                      endTime: endTime,
-                    ));
-                    Navigator.pop(context);
-                  },
-                  child: const Text('Tambah'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
-  }
-
-  void _showDetailDialog(TodoItem todoItem, int index) {
-    final TextEditingController notesController = TextEditingController(text: todoItem.notes);
-    final TextEditingController subtaskController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (context, setDialogState) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(16),
-              ),
-              title: Text(
-                todoItem.task,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              content: SizedBox(
-                width: double.maxFinite,
-                height: 500,
-                child: SingleChildScrollView(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      // Priority and Days info
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.grey[50],
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  width: 12,
-                                  height: 12,
-                                  decoration: BoxDecoration(
-                                    color: todoItem.priorityColor,
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text('Prioritas: ${todoItem.priority}'),
-                              ],
-                            ),
-                            if (todoItem.dueDate != null) ...[
-                              const SizedBox(height: 4),
-                              Row(
-                                children: [
-                                  Icon(Icons.calendar_today, size: 16, color: todoItem.isOverdue ? Colors.red : Colors.blue),
-                                  const SizedBox(width: 8),
-                                  Text('Deadline: ${todoItem.dueDateString}', 
-                                    style: TextStyle(color: todoItem.isOverdue ? Colors.red : null)),
-                                ],
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      
-                      // Notes Section
-                      const Text('Catatan:', style: TextStyle(fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: notesController,
-                        decoration: const InputDecoration(
-                          hintText: 'Tambahkan catatan...',
-                          border: OutlineInputBorder(),
-                        ),
-                        maxLines: 3,
-                        onChanged: (value) => _updateNotes(index, value),
-                      ),
-                      const SizedBox(height: 16),
-                      
-                      // Subtasks Section
-                      Row(
-                        children: [
-                          const Text('Subtask:', style: TextStyle(fontWeight: FontWeight.bold)),
-                          const Spacer(),
-                          Text('${todoItem.completedSubtasks}/${todoItem.totalSubtasks}'),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      
-                      // Add subtask field
-                      Row(
-                        children: [
-                          Expanded(
-                            child: TextField(
-                              controller: subtaskController,
-                              decoration: const InputDecoration(
-                                hintText: 'Tambah subtask...',
-                                border: OutlineInputBorder(),
-                              ),
-                              onSubmitted: (value) async {
-                                if (value.trim().isNotEmpty) {
-                                  await _showSubtaskTimerDialog(context, value.trim(), (subtask) {
-                                    _addSubtask(index, subtask.task, 
-                                        scheduledTime: subtask.scheduledTime, 
-                                        endTime: subtask.endTime);
-                                    subtaskController.clear();
-                                    setDialogState(() {});
-                                  });
-                                }
-                              },
-                            ),
-                          ),
-                          IconButton(
-                            onPressed: () async {
-                              if (subtaskController.text.trim().isNotEmpty) {
-                                await _showSubtaskTimerDialog(context, subtaskController.text.trim(), (subtask) {
-                                  _addSubtask(index, subtask.task, 
-                                      scheduledTime: subtask.scheduledTime, 
-                                      endTime: subtask.endTime);
-                                  subtaskController.clear();
-                                  setDialogState(() {});
-                                });
-                              }
-                            },
-                            icon: const Icon(Icons.add),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      
-                      // Subtasks list
-                      Container(
-                        constraints: const BoxConstraints(maxHeight: 250),
-                        child: ListView.builder(
-                          shrinkWrap: true,
-                          itemCount: todoItem.subtasks.length,
-                          itemBuilder: (context, subtaskIndex) {
-                            final subtask = todoItem.subtasks[subtaskIndex];
-                            return Card(
-                              margin: const EdgeInsets.only(bottom: 8),
-                              child: ListTile(
-                                dense: true,
-                                leading: Checkbox(
-                                  value: subtask.isCompleted,
-                                  onChanged: (value) {
-                                    _toggleSubtask(index, subtaskIndex);
-                                    setDialogState(() {});
-                                  },
-                                ),
-                                title: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      subtask.task,
-                                      style: TextStyle(
-                                        decoration: subtask.isCompleted 
-                                            ? TextDecoration.lineThrough 
-                                            : TextDecoration.none,
-                                        color: subtask.isCompleted 
-                                            ? Colors.grey[600] 
-                                            : Colors.black87,
-                                        fontSize: 14,
-                                      ),
-                                    ),
-                                    if (subtask.isScheduled)
-                                      Row(
-                                        children: [
-                                          Icon(
-                                            subtask.isActive ? Icons.play_circle : Icons.schedule,
-                                            size: 12,
-                                            color: subtask.isActive ? Colors.green : Colors.blue,
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            'Mulai: ${_formatDateTime(subtask.scheduledTime!)}',
-                                            style: TextStyle(
-                                              fontSize: 10,
-                                              color: subtask.isActive ? Colors.green : Colors.blue[600],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    if (subtask.hasEndTime)
-                                      Row(
-                                        children: [
-                                          Icon(
-                                            subtask.isOverdue ? Icons.warning : Icons.timer_off,
-                                            size: 12,
-                                            color: subtask.isOverdue ? Colors.red : Colors.orange,
-                                          ),
-                                          const SizedBox(width: 4),
-                                          Text(
-                                            subtask.isOverdue 
-                                                ? 'TERLAMBAT!'
-                                                : subtask.remainingTime != null
-                                                    ? 'Sisa: ${_formatDuration(subtask.remainingTime!)}'
-                                                    : 'Berakhir: ${_formatDateTime(subtask.endTime!)}',
-                                            style: TextStyle(
-                                              fontSize: 10,
-                                              color: subtask.isOverdue 
-                                                  ? Colors.red 
-                                                  : Colors.orange[600],
-                                              fontWeight: subtask.isOverdue 
-                                                  ? FontWeight.bold 
-                                                  : FontWeight.normal,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                  ],
-                                ),
-                                trailing: IconButton(
-                                  icon: const Icon(Icons.delete_outline, size: 20),
-                                  onPressed: () {
-                                    _removeSubtask(index, subtaskIndex);
-                                    setDialogState(() {});
-                                  },
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: const Text('Tutup'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
+    ).then((_) {
+      // Dispose controllers after dialog is fully closed to avoid 'used after dispose' during pop animation
+      taskController.dispose();
+      notesController.dispose();
+      subtaskController.dispose();
+    });
   }
 
   Widget _buildTodoList() {
@@ -1077,17 +915,41 @@ class _TodoListScreenState extends State<TodoListScreen>
           size: 24,
         ),
       ),
+      confirmDismiss: (direction) async {
+        final result = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Hapus Tugas'),
+            content: Text('Yakin ingin menghapus tugas "${todoItem.task}"?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Batal'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                child: const Text('Hapus'),
+              ),
+            ],
+          ),
+        );
+        return result ?? false;
+      },
       onDismissed: (direction) {
         final removedItem = todoItem;
-        _removeTodoItem(index);
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Tugas "${removedItem.task}" dihapus'),
-              duration: const Duration(seconds: 2),
-            ),
-          );
-        }
+        // Defer state mutation until after the current frame to avoid build scope issues
+        scheduler.SchedulerBinding.instance.addPostFrameCallback((_) {
+          _removeTodoItem(index);
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Tugas "${removedItem.task}" dihapus'),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+        });
       },
       child: Card(
         margin: const EdgeInsets.symmetric(vertical: 4),
@@ -1114,70 +976,75 @@ class _TodoListScreenState extends State<TodoListScreen>
                   ),
                 ),
               ),
-              title: Row(
+              title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Expanded(
-                    child: Text(
-                      todoItem.task,
-                      style: TextStyle(
-                        fontSize: 16,
-                        decoration: todoItem.isCompleted 
-                            ? TextDecoration.lineThrough 
-                            : TextDecoration.none,
-                        color: todoItem.isCompleted 
-                            ? Colors.grey[600] 
-                            : hasOverdueSubtasks
-                                ? Colors.red[700]
-                                : Colors.black87,
-                        fontWeight: todoItem.isCompleted 
-                            ? FontWeight.normal 
-                            : FontWeight.w500,
-                      ),
+                  Text(
+                    todoItem.task,
+                    style: TextStyle(
+                      fontSize: 16,
+                      decoration: todoItem.isCompleted 
+                          ? TextDecoration.lineThrough 
+                          : TextDecoration.none,
+                      color: todoItem.isCompleted 
+                          ? Colors.grey[600] 
+                          : hasOverdueSubtasks
+                              ? Colors.red[700]
+                              : Colors.black87,
+                      fontWeight: todoItem.isCompleted 
+                          ? FontWeight.normal 
+                          : FontWeight.w500,
                     ),
                   ),
-                  Container(
-                    width: 12,
-                    height: 12,
-                    margin: const EdgeInsets.only(left: 8),
-                    decoration: BoxDecoration(
-                      color: todoItem.priorityColor,
-                      shape: BoxShape.circle,
-                    ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: todoItem.priorityColor,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      if (hasActiveSubtasks) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.green[100],
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.play_circle, size: 10, color: Colors.green[700]),
+                              const SizedBox(width: 2),
+                              Text('AKTIF', style: TextStyle(fontSize: 8, color: Colors.green[700], fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                        ),
+                      ],
+                      if (hasOverdueSubtasks) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(
+                            color: Colors.red[100],
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.warning, size: 10, color: Colors.red[700]),
+                              const SizedBox(width: 2),
+                              Text('TERLAMBAT', style: TextStyle(fontSize: 8, color: Colors.red[700], fontWeight: FontWeight.bold)),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                  if (hasActiveSubtasks)
-                    Container(
-                      margin: const EdgeInsets.only(left: 8),
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.green[100],
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.play_circle, size: 12, color: Colors.green[700]),
-                          const SizedBox(width: 2),
-                          Text('AKTIF', style: TextStyle(fontSize: 10, color: Colors.green[700], fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                    ),
-                  if (hasOverdueSubtasks)
-                    Container(
-                      margin: const EdgeInsets.only(left: 8),
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: Colors.red[100],
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.warning, size: 12, color: Colors.red[700]),
-                          const SizedBox(width: 2),
-                          Text('TERLAMBAT', style: TextStyle(fontSize: 10, color: Colors.red[700], fontWeight: FontWeight.bold)),
-                        ],
-                      ),
-                    ),
                 ],
               ),
               subtitle: Column(
@@ -1238,26 +1105,71 @@ class _TodoListScreenState extends State<TodoListScreen>
                     ),
                 ],
               ),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  if (todoItem.subtasks.isNotEmpty || todoItem.notes.isNotEmpty)
-                    IconButton(
-                      icon: Icon(
-                        todoItem.isExpanded ? Icons.expand_less : Icons.expand_more,
-                        color: Colors.blue,
+              trailing: SizedBox(
+                width: 120, // Fixed width to prevent overflow
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    if (todoItem.subtasks.isNotEmpty || todoItem.notes.isNotEmpty)
+                      SizedBox(
+                        width: 32,
+                        height: 32,
+                        child: IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                          icon: Icon(
+                            todoItem.isExpanded ? Icons.expand_less : Icons.expand_more,
+                            color: Colors.blue,
+                            size: 20,
+                          ),
+                          onPressed: () => _toggleExpanded(index),
+                        ),
                       ),
-                      onPressed: () => _toggleExpanded(index),
+                    SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        icon: const Icon(Icons.edit_outlined, color: Colors.blue, size: 20),
+                        onPressed: () => _showDetailDialog(todoItem, index),
+                      ),
                     ),
-                  IconButton(
-                    icon: const Icon(Icons.edit_outlined, color: Colors.blue),
-                    onPressed: () => _showDetailDialog(todoItem, index),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.delete_outline, color: Colors.red),
-                    onPressed: () => _removeTodoItem(index),
-                  ),
-                ],
+                    SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: IconButton(
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                        icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                        onPressed: () async {
+                          final confirm = await showDialog<bool>(
+                            context: context,
+                            builder: (context) => AlertDialog(
+                              title: const Text('Hapus Tugas'),
+                              content: Text('Yakin ingin menghapus tugas "${todoItem.task}"?'),
+                              actions: [
+                                TextButton(
+                                  onPressed: () => Navigator.pop(context, false),
+                                  child: const Text('Batal'),
+                                ),
+                                ElevatedButton(
+                                  onPressed: () => Navigator.pop(context, true),
+                                  style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                                  child: const Text('Hapus'),
+                                ),
+                              ],
+                            ),
+                          );
+                          if (confirm == true) {
+                            _removeTodoItem(index);
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
               ),
             ),
             
@@ -1425,76 +1337,92 @@ class _TodoListScreenState extends State<TodoListScreen>
     }
 
     return Scaffold(
-      body: Column(
-        children: [
-          if (_totalCount > 0)
-            Container(
-              width: double.infinity,
-              margin: const EdgeInsets.all(16),
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    Theme.of(context).primaryColor,
-                    Theme.of(context).primaryColor.withValues(alpha: 0.8),
-                  ],
-                ),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Column(
-                children: [
-                  const Text(
-                    'Progress Tugas',
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '$_completedCount dari $_totalCount selesai',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 14,
-                    ),
-                  ),
-                  if (_activeSubtasksCount > 0 || _overdueSubtasksCount > 0)
-                    Text(
-                      'Subtask: ${_activeSubtasksCount > 0 ? '$_activeSubtasksCount aktif' : ''}${_activeSubtasksCount > 0 && _overdueSubtasksCount > 0 ? ' â€¢ ' : ''}${_overdueSubtasksCount > 0 ? '$_overdueSubtasksCount terlambat' : ''}',
-                      style: const TextStyle(
-                        color: Colors.white70,
-                        fontSize: 12,
+      body: _tabIndex == 0
+          ? Column(
+              children: [
+                if (_totalCount > 0)
+                  Container(
+                    width: double.infinity,
+                    margin: const EdgeInsets.all(16),
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Theme.of(context).primaryColor,
+                          Theme.of(context).primaryColor.withValues(alpha: 0.8),
+                        ],
                       ),
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                  const SizedBox(height: 12),
-                  LinearProgressIndicator(
-                    value: _totalCount > 0 ? _completedCount / _totalCount : 0,
-                    backgroundColor: Colors.white30,
-                    valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                    child: Column(
+                      children: [
+                        const Text(
+                          'Progress Tugas',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Text(
+                          '$_completedCount dari $_totalCount selesai',
+                          style: const TextStyle(
+                            color: Colors.white70,
+                            fontSize: 14,
+                          ),
+                        ),
+                        if (_activeSubtasksCount > 0 || _overdueSubtasksCount > 0)
+                          Text(
+                            'Subtask: ${_activeSubtasksCount > 0 ? '$_activeSubtasksCount aktif' : ''}${_activeSubtasksCount > 0 && _overdueSubtasksCount > 0 ? ' â€¢ ' : ''}${_overdueSubtasksCount > 0 ? '$_overdueSubtasksCount terlambat' : ''}',
+                            style: const TextStyle(
+                              color: Colors.white70,
+                              fontSize: 12,
+                            ),
+                          ),
+                        const SizedBox(height: 12),
+                        LinearProgressIndicator(
+                          value: _totalCount > 0 ? _completedCount / _totalCount : 0,
+                          backgroundColor: Colors.white30,
+                          valueColor: const AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      ],
+                    ),
                   ),
-                ],
-              ),
+                Expanded(
+                  child: _buildTodoList(),
+                ),
+              ],
+            )
+          : TodoFilterView<TodoItem>(
+              items: _todoItems,
+              getPriority: (t) => t.priority,
+              itemBuilder: (origIndex, item) => _buildTodoItem(item, origIndex),
             ),
-          Expanded(
-            child: _buildTodoList(),
-          ),
+      floatingActionButton: _tabIndex == 0
+          ? ScaleTransition(
+              scale: Tween<double>(begin: 1.0, end: 0.85).animate(
+                CurvedAnimation(
+                  parent: _fabAnimationController,
+                  curve: Curves.elasticOut,
+                ),
+              ),
+              child: FloatingActionButton.extended(
+                onPressed: _showAddDialog,
+                icon: const Icon(Icons.add),
+                label: const Text('Tambah Tugas'),
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+              ),
+            )
+          : null,
+      bottomNavigationBar: BottomNavigationBar(
+        currentIndex: _tabIndex,
+        onTap: (i) => setState(() => _tabIndex = i),
+        items: const [
+          BottomNavigationBarItem(icon: Icon(Icons.list), label: 'Daftar'),
+          BottomNavigationBarItem(icon: Icon(Icons.filter_alt), label: 'Filter'),
         ],
-      ),
-      floatingActionButton: ScaleTransition(
-        scale: Tween<double>(begin: 1.0, end: 0.85).animate(
-          CurvedAnimation(
-            parent: _fabAnimationController,
-            curve: Curves.elasticOut,
-          ),
-        ),
-        child: FloatingActionButton.extended(
-          onPressed: _showAddDialog,
-          icon: const Icon(Icons.add),
-          label: const Text('Tambah Tugas'),
-          backgroundColor: Theme.of(context).primaryColor,
-          foregroundColor: Colors.white,
-        ),
       ),
     );
   }

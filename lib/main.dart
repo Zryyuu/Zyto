@@ -1,19 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'page/todolist.dart';
 import 'page/budgeting.dart';
 import 'Login/auth_wrapper.dart';
 import 'services/auth_service.dart';
 import 'services/local_storage_service.dart';
-
-// Tambahkan ke pubspec.yaml:
-// dependencies:
-//   flutter_local_notifications: ^17.2.2
-//   timezone: ^0.9.4
-
-final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
-    FlutterLocalNotificationsPlugin();
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,16 +25,6 @@ void main() async {
     
     // Initialize local storage
     await LocalStorageService.instance.init();
-    
-    // Initialize notifications
-    const AndroidInitializationSettings initializationSettingsAndroid =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-    
-    const InitializationSettings initializationSettings =
-        InitializationSettings(android: initializationSettingsAndroid);
-    
-    await flutterLocalNotificationsPlugin.initialize(initializationSettings);
-    
   } catch (e) {
     // If initialization fails, still run the app but with limited functionality
     // Initialization error: $e

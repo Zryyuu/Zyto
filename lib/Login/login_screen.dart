@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../services/auth_service.dart';
 import '../services/local_storage_service.dart';
 import 'register_screen.dart';
@@ -16,7 +15,6 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final AuthService _authService = AuthService();
-  final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
   
   bool _isLoading = false;
   bool _obscurePassword = true;
@@ -24,34 +22,6 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   void initState() {
     super.initState();
-    const AndroidInitializationSettings initializationSettingsAndroid =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-    const InitializationSettings initializationSettings =
-        InitializationSettings(android: initializationSettingsAndroid);
-    _localNotifications.initialize(initializationSettings);
-
-    // Request notification permission on Android 13+
-    _localNotifications
-        .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
-        ?.requestNotificationsPermission();
-  }
-
-  Future<void> _showResetNotification() async {
-    const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-      'reset_channel',
-      'Password Reset',
-      channelDescription: 'Notifikasi setelah email reset password dikirim',
-      importance: Importance.high,
-      priority: Priority.high,
-      playSound: true,
-    );
-    const NotificationDetails details = NotificationDetails(android: androidDetails);
-    await _localNotifications.show(
-      1001,
-      'Email reset dikirim',
-      'Periksa kotak masuk Anda untuk mereset password.',
-      details,
-    );
   }
 
   @override
@@ -82,9 +52,16 @@ class _LoginScreenState extends State<LoginScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Login berhasil!'),
+              content: Text('Login berhasil! Selamat datang kembali!'),
               backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
             ),
+          );
+          
+          // Force navigation to MainScreen after successful login
+          Navigator.of(context).pushNamedAndRemoveUntil(
+            '/',
+            (route) => false,
           );
         }
       } catch (e) {
@@ -127,7 +104,6 @@ class _LoginScreenState extends State<LoginScreen> {
             duration: Duration(seconds: 4),
           ),
         );
-        await _showResetNotification();
       }
     } catch (e) {
       if (mounted) {
@@ -148,7 +124,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
     try {
       final result = await _authService.signInWithGoogle();
-      
       if (result != null) {
         // Clear guest mode when logging in successfully
         await LocalStorageService.instance.setGuestMode(false);
@@ -156,9 +131,16 @@ class _LoginScreenState extends State<LoginScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Login dengan Google berhasil!'),
+              content: Text('Login dengan Google berhasil! Selamat datang!'),
               backgroundColor: Colors.green,
+              duration: Duration(seconds: 2),
             ),
+          );
+          
+          // Force navigation to MainScreen after successful Google login
+          Navigator.of(context).pushNamedAndRemoveUntil(
+            '/',
+            (route) => false,
           );
         }
       }
@@ -399,7 +381,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               side: BorderSide(color: Colors.grey[300]!),
                             ),
                             icon: Image.asset(
-                              '../../assets/icon/google.png',
+                              'assets/google.png',
                               width: 20,
                               height: 20,
                               fit: BoxFit.contain,

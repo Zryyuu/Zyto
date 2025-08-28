@@ -103,14 +103,6 @@ class _AuthWrapperState extends State<AuthWrapper> {
       );
     }
 
-    // If in guest mode, show main screen directly
-    if (_isGuestMode) {
-      return MainScreen(
-        isGuestMode: true,
-        onSwitchToLogin: _switchToLoginMode,
-      );
-    }
-
     return StreamBuilder<User?>(
       stream: _authService.authStateChanges,
       builder: (context, snapshot) {
@@ -123,12 +115,28 @@ class _AuthWrapperState extends State<AuthWrapper> {
           );
         }
         
-        // If user is logged in, show main app
+        // If user is logged in, show main app (not guest mode)
         if (snapshot.hasData && snapshot.data != null) {
+          // Ensure we're not in guest mode when logged in
+          if (_isGuestMode) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              setState(() {
+                _isGuestMode = false;
+              });
+            });
+          }
           return const MainScreen(isGuestMode: false);
         }
         
-        // If user is not logged in, check if guest mode is enabled
+        // User is not logged in - check guest mode
+        if (_isGuestMode) {
+          return MainScreen(
+            isGuestMode: true,
+            onSwitchToLogin: _switchToLoginMode,
+          );
+        }
+        
+        // Check if guest mode is enabled in storage
         return FutureBuilder<bool>(
           future: LocalStorageService.instance.isGuestMode(),
           builder: (context, guestSnapshot) {
@@ -142,6 +150,14 @@ class _AuthWrapperState extends State<AuthWrapper> {
             
             final isGuest = guestSnapshot.data ?? false;
             if (isGuest) {
+              // Update local state to match storage
+              if (!_isGuestMode) {
+                WidgetsBinding.instance.addPostFrameCallback((_) {
+                  setState(() {
+                    _isGuestMode = true;
+                  });
+                });
+              }
               return MainScreen(
                 isGuestMode: true,
                 onSwitchToLogin: _switchToLoginMode,

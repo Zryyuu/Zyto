@@ -1,6 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' as scheduler;
 import 'dart:async';
 import '../services/data_service.dart';
+
+// Color utilities used in this file
+extension ColorX on Color {
+  // Darken the color by [amount] (0..1)
+  Color darken([double amount = 0.15]) {
+    assert(amount >= 0 && amount <= 1);
+    final hsl = HSLColor.fromColor(this);
+    double lightness = hsl.lightness - amount;
+    if (lightness < 0) lightness = 0;
+    if (lightness > 1) lightness = 1;
+    return hsl.withLightness(lightness).toColor();
+  }
+}
 
 // Savings Plan Models
 class SavingsPlan {
@@ -165,8 +179,340 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
   List<SavingsTransaction> _savingsTransactions = [];
   late AnimationController _fabAnimationController;
   bool _isLoading = true;
-  int _selectedIndex = 0; // 0: Transactions, 1: Savings Plans
+  int _selectedIndex = 0; // 0: Transaksi, 1: Rencana Menabung, 2: Rekap
   final DataService _dataService = DataService.instance;
+
+  // Rekap state
+  DateTime _recapMonth = DateTime(DateTime.now().year, DateTime.now().month);
+
+  // ----- Monthly Recap helpers (moved from model) -----
+  void _changeRecapMonth(int diffMonths) {
+    setState(() {
+      _recapMonth = DateTime(
+        _recapMonth.year,
+        _recapMonth.month + diffMonths,
+      );
+    });
+  }
+
+  bool _isSameMonth(DateTime a, DateTime b) => a.year == b.year && a.month == b.month;
+
+  String _formatMonthYear(DateTime d) {
+    const months = [
+      'Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'
+    ];
+    return '${months[d.month - 1]} ${d.year}';
+  }
+
+  // Month-Year Picker dialog for quick jump
+  void _showMonthYearPicker() {
+    final now = DateTime.now();
+    final years = <int>{now.year}
+      ..addAll(_transactions.map((t) => t.date.year))
+      ..addAll(_savingsTransactions.map((t) => t.date.year))
+      ..addAll(_savingsPlans.map((p) => p.targetDate.year));
+    final sortedYears = years.toList()..sort();
+    if (!sortedYears.contains(now.year)) sortedYears.add(now.year);
+    sortedYears.sort();
+
+    int tempYear = _recapMonth.year;
+    int tempMonth = _recapMonth.month; // 1..12
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocal) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              title: const Text('Pilih Bulan & Tahun'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Year selector
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      IconButton(
+                        onPressed: () => setLocal(() => tempYear--),
+                        icon: const Icon(Icons.chevron_left),
+                      ),
+                      DropdownButton<int>(
+                        value: tempYear,
+                        onChanged: (v) => setLocal(() => tempYear = v ?? tempYear),
+                        items: sortedYears
+                            .map((y) => DropdownMenuItem(value: y, child: Text('$y')))
+                            .toList(),
+                      ),
+                      IconButton(
+                        onPressed: () => setLocal(() => tempYear++),
+                        icon: const Icon(Icons.chevron_right),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  // Months grid
+                  GridView.builder(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 3,
+                      mainAxisSpacing: 8,
+                      crossAxisSpacing: 8,
+                      childAspectRatio: 2.6,
+                    ),
+                    itemCount: 12,
+                    itemBuilder: (context, index) {
+                      const months = [
+                        'Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'
+                      ];
+                      final m = index + 1;
+                      final selected = m == tempMonth;
+                      final color = Theme.of(context).primaryColor;
+                      return InkWell(
+                        onTap: () => setLocal(() => tempMonth = m),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Container(
+                          alignment: Alignment.center,
+                          decoration: BoxDecoration(
+                            color: selected ? color.withValues(alpha: 0.15) : Colors.grey[100],
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: selected ? color : Colors.grey[300]!),
+                          ),
+                          child: Text(
+                            months[index],
+                            style: TextStyle(
+                              fontWeight: FontWeight.w600,
+                              color: selected ? color : Colors.grey[800],
+                            ),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Batal'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    setState(() {
+                      _recapMonth = DateTime(tempYear, tempMonth);
+                    });
+                    Navigator.pop(context);
+                  },
+                  child: const Text('Pilih'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildMonthlyRecap() {
+    final monthTx = _transactions.where((t) => _isSameMonth(t.date, _recapMonth)).toList()
+      ..sort((a, b) => b.date.compareTo(a.date));
+
+    double income = 0, expense = 0;
+    final Map<String, double> byCategory = {};
+    for (final t in monthTx) {
+      if (t.isIncome) {
+        income += t.amount;
+      } else {
+        expense += t.amount;
+      }
+      byCategory[t.category] = (byCategory[t.category] ?? 0) + t.amount * (t.isIncome ? 1 : -1);
+    }
+    final topCategories = byCategory.entries.toList()
+      ..sort((a, b) => b.value.abs().compareTo(a.value.abs()));
+
+    return Column(
+      children: [
+        // Header with month selector
+        Container(
+          padding: const EdgeInsets.all(16),
+          child: Row(
+            children: [
+              IconButton(
+                onPressed: () => _changeRecapMonth(-1),
+                icon: const Icon(Icons.chevron_left),
+              ),
+              Expanded(
+                child: Center(
+                  child: InkWell(
+                    onTap: _showMonthYearPicker,
+                    borderRadius: BorderRadius.circular(8),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _formatMonthYear(_recapMonth),
+                          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                        ),
+                        const SizedBox(width: 6),
+                        const Icon(Icons.arrow_drop_down),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: () => _changeRecapMonth(1),
+                icon: const Icon(Icons.chevron_right),
+              ),
+            ],
+          ),
+        ),
+
+        // Summary cards
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16),
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final isNarrow = constraints.maxWidth < 400;
+              if (isNarrow) {
+                return Column(
+                  children: [
+                    _summaryTile(
+                      title: 'Pemasukan',
+                      value: _formatCurrency(income),
+                      color: Colors.green,
+                      icon: Icons.trending_up,
+                    ),
+                    const SizedBox(height: 12),
+                    _summaryTile(
+                      title: 'Pengeluaran',
+                      value: _formatCurrency(expense),
+                      color: Colors.red,
+                      icon: Icons.trending_down,
+                    ),
+                  ],
+                );
+              }
+              return Row(
+                children: [
+                  Expanded(
+                    child: _summaryTile(
+                      title: 'Pemasukan',
+                      value: _formatCurrency(income),
+                      color: Colors.green,
+                      icon: Icons.trending_up,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _summaryTile(
+                      title: 'Pengeluaran',
+                      value: _formatCurrency(expense),
+                      color: Colors.red,
+                      icon: Icons.trending_down,
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: 12),
+
+        const SizedBox(height: 16),
+        // Category breakdown and transaction list
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            children: [
+              const Text('Ringkasan Kategori', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              if (topCategories.isEmpty)
+                Text('Belum ada data pada bulan ini', style: TextStyle(color: Colors.grey[600]))
+              else
+                ...topCategories.take(6).map((e) => ListTile(
+                      dense: true,
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+                      leading: Icon(
+                        e.value >= 0 ? Icons.arrow_upward : Icons.arrow_downward,
+                        color: e.value >= 0 ? Colors.green : Colors.red,
+                      ),
+                      title: Text(e.key),
+                      trailing: Text(
+                        _formatCurrency(e.value.abs()),
+                        style: TextStyle(
+                          color: e.value >= 0 ? Colors.green : Colors.red,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    )),
+              const SizedBox(height: 16),
+              const Text('Transaksi Bulan Ini', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              if (monthTx.isEmpty)
+                Container(
+                  padding: const EdgeInsets.all(24),
+                  alignment: Alignment.center,
+                  child: Text('Tidak ada transaksi', style: TextStyle(color: Colors.grey[600])),
+                )
+              else
+                ...monthTx.map((t) => Card(
+                      margin: const EdgeInsets.symmetric(vertical: 4),
+                      child: ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: (t.isIncome ? Colors.green : Colors.red).withValues(alpha: 0.15),
+                          child: Icon(t.isIncome ? Icons.add : Icons.remove, color: t.isIncome ? Colors.green : Colors.red),
+                        ),
+                        title: Text(t.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+                        subtitle: Text(_formatDate(t.date)),
+                        trailing: Text(
+                          '${t.isIncome ? '+' : '-'} ${_formatCurrency(t.amount)}',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: t.isIncome ? Colors.green : Colors.red,
+                          ),
+                        ),
+                      ),
+                    )),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _summaryTile({required String title, required String value, required Color color, required IconData icon}) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+            child: Icon(icon, color: color),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: TextStyle(color: Colors.grey[700])),
+                const SizedBox(height: 4),
+                Text(value, style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: color.darken())),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   bool get wantKeepAlive => true;
@@ -306,10 +652,12 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
           builder: (context, setDialogState) {
             return AlertDialog(
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
               title: const Text('Tambah Transaksi'),
-              content: SizedBox(
-                width: double.maxFinite,
-                child: SingleChildScrollView(
+              content: SingleChildScrollView(
+                padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 600),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
@@ -343,7 +691,7 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
                           ),
                         ],
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(height: 16),
                       
                       // Title
                       TextField(
@@ -477,30 +825,42 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
           builder: (context, setDialogState) {
             return AlertDialog(
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
               title: const Text('Tambah Rencana Menabung'),
               content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    TextField(
-                      controller: nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Nama Rencana',
-                        border: OutlineInputBorder(),
+                padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 600),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: nameController,
+                        decoration: InputDecoration(
+                          labelText: 'Nama Rencana',
+                          hintText: 'Masukkan nama rencana',
+                          floatingLabelBehavior: FloatingLabelBehavior.always,
+                          isDense: false,
+                          contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 16),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        textInputAction: TextInputAction.next,
+                        autofocus: true,
                       ),
-                      autofocus: true,
-                    ),
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: targetController,
-                      decoration: const InputDecoration(
-                        labelText: 'Target Jumlah',
-                        prefixText: 'Rp ',
-                        border: OutlineInputBorder(),
+                      const SizedBox(height: 16),
+                      TextField(
+                        controller: targetController,
+                        decoration: const InputDecoration(
+                          labelText: 'Target Jumlah',
+                          prefixText: 'Rp ',
+                          border: OutlineInputBorder(),
+                        ),
+                        keyboardType: TextInputType.number,
                       ),
-                      keyboardType: TextInputType.number,
-                    ),
-                    const SizedBox(height: 16),
+                      const SizedBox(height: 16),
                     
                     // Target Date
                     InkWell(
@@ -576,6 +936,7 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
                   ],
                 ),
               ),
+              ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.pop(context),
@@ -627,30 +988,34 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
       builder: (context) {
         return AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
           title: Text('Tambah ke "${plan.name}"'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: amountController,
-                decoration: const InputDecoration(
-                  labelText: 'Jumlah Menabung',
-                  prefixText: 'Rp ',
-                  border: OutlineInputBorder(),
+          content: SingleChildScrollView(
+            padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: amountController,
+                  decoration: const InputDecoration(
+                    labelText: 'Jumlah Menabung',
+                    prefixText: 'Rp ',
+                    border: OutlineInputBorder(),
+                  ),
+                  keyboardType: TextInputType.number,
+                  autofocus: true,
                 ),
-                keyboardType: TextInputType.number,
-                autofocus: true,
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: notesController,
-                decoration: const InputDecoration(
-                  labelText: 'Catatan (opsional)',
-                  border: OutlineInputBorder(),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: notesController,
+                  decoration: const InputDecoration(
+                    labelText: 'Catatan (opsional)',
+                    border: OutlineInputBorder(),
+                  ),
+                  maxLines: 2,
                 ),
-                maxLines: 2,
-              ),
-            ],
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -1077,14 +1442,44 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
         ),
         child: const Icon(Icons.delete, color: Colors.white, size: 24),
       ),
-      onDismissed: (direction) {
-        _removeTransaction(index);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Transaksi "${transaction.title}" dihapus'),
-            duration: const Duration(seconds: 2),
+      confirmDismiss: (direction) async {
+        final result = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Hapus Transaksi'),
+            content: Text('Yakin ingin menghapus transaksi "${transaction.title}"?'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Batal'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Hapus'),
+              ),
+            ],
           ),
         );
+        return result ?? false;
+      },
+      onDismissed: (direction) {
+        final removed = transaction;
+        // Defer state mutation until after current frame to avoid build scope issues
+        scheduler.SchedulerBinding.instance.addPostFrameCallback((_) {
+          _removeTransaction(index);
+          if (context.mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Transaksi "${removed.title}" dihapus'),
+                duration: const Duration(seconds: 2),
+              ),
+            );
+          }
+        });
       },
       child: Card(
         margin: const EdgeInsets.only(bottom: 8),
@@ -1352,6 +1747,7 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
         children: [
           _buildTransactions(),
           _buildSavingsPlans(),
+          _buildMonthlyRecap(),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(
@@ -1363,30 +1759,36 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
         },
         items: const [
           BottomNavigationBarItem(
-            icon: Icon(Icons.receipt),
+            icon: Icon(Icons.list_alt),
             label: 'Transaksi',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.savings),
-            label: 'Rencana Menabung',
+            label: 'Rencana',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.assessment),
+            label: 'Rekap',
           ),
         ],
       ),
-      floatingActionButton: ScaleTransition(
-        scale: Tween<double>(begin: 1.0, end: 0.85).animate(
-          CurvedAnimation(
-            parent: _fabAnimationController,
-            curve: Curves.elasticOut,
-          ),
-        ),
-        child: FloatingActionButton.extended(
-          onPressed: _selectedIndex == 0 ? _showAddTransactionDialog : _showAddSavingsPlanDialog,
-          icon: const Icon(Icons.add),
-          label: Text(_selectedIndex == 0 ? 'Tambah Transaksi' : 'Tambah Rencana'),
-          backgroundColor: Theme.of(context).primaryColor,
-          foregroundColor: Colors.white,
-        ),
-      ),
+      floatingActionButton: _selectedIndex == 2
+          ? null
+          : ScaleTransition(
+              scale: Tween<double>(begin: 1.0, end: 0.85).animate(
+                CurvedAnimation(
+                  parent: _fabAnimationController,
+                  curve: Curves.elasticOut,
+                ),
+              ),
+              child: FloatingActionButton.extended(
+                onPressed: _selectedIndex == 0 ? _showAddTransactionDialog : _showAddSavingsPlanDialog,
+                icon: const Icon(Icons.add),
+                label: Text(_selectedIndex == 0 ? 'Tambah Transaksi' : 'Tambah Rencana'),
+                backgroundColor: Theme.of(context).primaryColor,
+                foregroundColor: Colors.white,
+              ),
+            ),
     );
   }
 }

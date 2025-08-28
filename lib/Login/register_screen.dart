@@ -43,20 +43,23 @@ class _RegisterScreenState extends State<RegisterScreen> {
           _nameController.text.trim(),
         );
         
+        // Sign out immediately after registration to force login
+        await _authService.signOut();
+        
         // Clear guest mode after successful registration
         await LocalStorageService.instance.setGuestMode(false);
-        
-        // Update last login time
-        await _authService.updateLastLogin();
         
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Registrasi berhasil! Selamat datang!'),
+              content: Text('Registrasi berhasil! Silakan login dengan akun Anda.'),
               backgroundColor: Colors.green,
+              duration: Duration(seconds: 3),
             ),
           );
-          // Don't navigate back - let AuthWrapper handle the transition
+          
+          // Navigate back to login screen
+          Navigator.pop(context);
         }
       } catch (e) {
         if (mounted) {
