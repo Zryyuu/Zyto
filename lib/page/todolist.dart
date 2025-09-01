@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+  import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart' as scheduler;
 
 import 'dart:async';
@@ -176,7 +176,12 @@ class TodoItem {
   }
 
   String _formatDate(DateTime date) {
-    return '${date.day}/${date.month}/${date.year}';
+    const months = [
+      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+    ];
+    final name = months[(date.month - 1).clamp(0, 11)];
+    return '${date.day} $name ${date.year}';
   }
 }
 
@@ -196,6 +201,14 @@ class _TodoListScreenState extends State<TodoListScreen>
   Timer? _uiTimer;
   final DataService _dataService = DataService.instance;
   int _tabIndex = 0;
+
+  String _monthName(int month) {
+    const months = [
+      'Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni',
+      'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'
+    ];
+    return months[(month - 1).clamp(0, 11)];
+  }
 
   @override
   bool get wantKeepAlive => true;
@@ -355,7 +368,7 @@ class _TodoListScreenState extends State<TodoListScreen>
                 children: [
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Waktu Mulai'),
+                    title: const Text('Waktu Mulai (opsional)'),
                     subtitle: Text(start != null ? _formatDateTime(start!) : 'Tidak ditetapkan'),
                     trailing: TextButton(
                       onPressed: () async {
@@ -369,7 +382,7 @@ class _TodoListScreenState extends State<TodoListScreen>
                   ),
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    title: const Text('Waktu Selesai'),
+                    title: const Text('Waktu Selesai (opsional)'),
                     subtitle: Text(end != null ? _formatDateTime(end!) : 'Tidak ditetapkan'),
                     trailing: TextButton(
                       onPressed: () async {
@@ -408,6 +421,125 @@ class _TodoListScreenState extends State<TodoListScreen>
     );
   }
 
+  Future<void> _showSubtaskEditDialog({
+    required BuildContext context,
+    TodoSubtask? initial,
+    required void Function(TodoSubtask) onSave,
+    String title = 'Edit Subtask',
+  }) async {
+    final TextEditingController taskCtrl =
+        TextEditingController(text: initial?.task ?? '');
+    DateTime? start = initial?.scheduledTime;
+    DateTime? end = initial?.endTime;
+    bool isCompleted = initial?.isCompleted ?? false;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setStateDialog) {
+            return AlertDialog(
+              title: Text(title),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('Judul Subtask'),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: taskCtrl,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        hintText: 'Masukkan judul subtask',
+                      ),
+                      autofocus: true,
+                    ),
+                    const SizedBox(height: 16),
+                    CheckboxListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Tandai selesai'),
+                      value: isCompleted,
+                      onChanged: (v) => setStateDialog(() => isCompleted = v ?? false),
+                    ),
+                    const SizedBox(height: 8),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Waktu Mulai (opsional)'),
+                      subtitle: Text(start != null ? _formatDateTime(start!) : 'Tidak ditetapkan'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (start != null)
+                            IconButton(
+                              icon: const Icon(Icons.clear, size: 20),
+                              onPressed: () => setStateDialog(() => start = null),
+                            ),
+                          TextButton(
+                            onPressed: () async {
+                              final picked = await _selectDateTime(context, initialDate: start);
+                              if (picked != null) setStateDialog(() => start = picked);
+                            },
+                            child: const Text('Pilih'),
+                          ),
+                        ],
+                      ),
+                    ),
+                    ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('Waktu Selesai (opsional)'),
+                      subtitle: Text(end != null ? _formatDateTime(end!) : 'Tidak ditetapkan'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          if (end != null)
+                            IconButton(
+                              icon: const Icon(Icons.clear, size: 20),
+                              onPressed: () => setStateDialog(() => end = null),
+                            ),
+                          TextButton(
+                            onPressed: () async {
+                              final picked = await _selectDateTime(context, initialDate: end);
+                              if (picked != null) setStateDialog(() => end = picked);
+                            },
+                            child: const Text('Pilih'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx),
+                  child: const Text('Batal'),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    final text = taskCtrl.text.trim();
+                    if (text.isEmpty) return;
+                    final sub = TodoSubtask(
+                      id: initial?.id ?? (DateTime.now().microsecondsSinceEpoch & 0x7FFFFFFF),
+                      task: text,
+                      isCompleted: isCompleted,
+                      scheduledTime: start,
+                      endTime: end,
+                    );
+                    onSave(sub);
+                    Navigator.pop(ctx);
+                  },
+                  child: const Text('Simpan'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+    taskCtrl.dispose();
+  }
+
   void _showDetailDialog(TodoItem todoItem, int index) {
     final TextEditingController notesController = TextEditingController(text: todoItem.notes);
     String selectedPriority = todoItem.priority;
@@ -421,8 +553,10 @@ class _TodoListScreenState extends State<TodoListScreen>
             return AlertDialog(
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
               title: Text('Detail: ${todoItem.task}', style: const TextStyle(fontWeight: FontWeight.bold)),
-              content: SingleChildScrollView(
-                child: Column(
+              content: SizedBox(
+                width: double.maxFinite,
+                child: SingleChildScrollView(
+                  child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisSize: MainAxisSize.min,
                   children: [
@@ -437,21 +571,24 @@ class _TodoListScreenState extends State<TodoListScreen>
                     const SizedBox(height: 16),
                     const Text('Prioritas:'),
                     const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      initialValue: selectedPriority,
-                      items: const [
-                        DropdownMenuItem(value: 'Rendah', child: Text('Rendah')),
-                        DropdownMenuItem(value: 'Sedang', child: Text('Sedang')),
-                        DropdownMenuItem(value: 'Tinggi', child: Text('Tinggi')),
-                      ],
-                      onChanged: (v) {
-                        if (v == null) return;
-                        setState(() {
-                          _todoItems[index].priority = v;
-                        });
-                        setDialogState(() => selectedPriority = v);
-                        _saveTodoItems();
-                      },
+                    SizedBox(
+                      width: double.infinity,
+                      child: DropdownButtonFormField<String>(
+                        initialValue: selectedPriority,
+                        items: const [
+                          DropdownMenuItem(value: 'Rendah', child: Text('Rendah')),
+                          DropdownMenuItem(value: 'Sedang', child: Text('Sedang')),
+                          DropdownMenuItem(value: 'Tinggi', child: Text('Tinggi')),
+                        ],
+                        onChanged: (v) {
+                          if (v == null) return;
+                          setState(() {
+                            _todoItems[index].priority = v;
+                          });
+                          setDialogState(() => selectedPriority = v);
+                          _saveTodoItems();
+                        },
+                      ),
                     ),
                     const SizedBox(height: 16),
                     const Text('Deadline (opsional):'),
@@ -499,7 +636,146 @@ class _TodoListScreenState extends State<TodoListScreen>
                         ),
                       ),
                     ),
+                    const SizedBox(height: 16),
+                    const Divider(),
+                    Row(
+                      children: [
+                        const Text('Subtask:', style: TextStyle(fontWeight: FontWeight.bold)),
+                        const Spacer(),
+                        Text('${_todoItems[index].subtasks.length} item'),
+                        const SizedBox(width: 8),
+                        ElevatedButton.icon(
+                          onPressed: () async {
+                            await _showSubtaskEditDialog(
+                              context: context,
+                              initial: null,
+                              title: 'Tambah Subtask',
+                              onSave: (newSub) {
+                                setState(() {
+                                  _todoItems[index].subtasks.add(newSub);
+                                });
+                                setDialogState(() {});
+                                _saveTodoItems();
+                              },
+                            );
+                          },
+                          icon: const Icon(Icons.add),
+                          label: const Text('Tambah'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Theme.of(context).primaryColor,
+                            foregroundColor: Colors.white,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    if (_todoItems[index].subtasks.isEmpty)
+                      Text('Belum ada subtask', style: TextStyle(color: Colors.grey[600])),
+                    if (_todoItems[index].subtasks.isNotEmpty)
+                      ListView.builder(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: _todoItems[index].subtasks.length,
+                        itemBuilder: (ctx, sIndex) {
+                          final sub = _todoItems[index].subtasks[sIndex];
+                          return ListTile(
+                            contentPadding: EdgeInsets.zero,
+                            leading: Checkbox(
+                              value: sub.isCompleted,
+                              onChanged: (v) {
+                                setState(() {
+                                  _todoItems[index].subtasks[sIndex].isCompleted = v ?? false;
+                                  // Auto toggle parent when all done / not all done
+                                  if (_todoItems[index].allSubtasksCompleted) {
+                                    _todoItems[index].isCompleted = true;
+                                  } else if (_todoItems[index].isCompleted) {
+                                    _todoItems[index].isCompleted = false;
+                                  }
+                                });
+                                setDialogState(() {});
+                                _saveTodoItems();
+                              },
+                            ),
+                            title: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  sub.task,
+                                  style: TextStyle(
+                                    decoration: sub.isCompleted ? TextDecoration.lineThrough : TextDecoration.none,
+                                  ),
+                                ),
+                                if (sub.isScheduled || sub.hasEndTime)
+                                  Row(
+                                    children: [
+                                      if (sub.isScheduled)
+                                        Text('Mulai: ${_formatDateTime(sub.scheduledTime!)}', style: TextStyle(fontSize: 12, color: Colors.blue[700])),
+                                      if (sub.isScheduled && sub.hasEndTime) const SizedBox(width: 8),
+                                      if (sub.hasEndTime)
+                                        Text('Selesai: ${_formatDateTime(sub.endTime!)}', style: TextStyle(fontSize: 12, color: Colors.orange[700])),
+                                    ],
+                                  ),
+                              ],
+                            ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.edit, color: Colors.blue),
+                                  onPressed: () async {
+                                    await _showSubtaskEditDialog(
+                                      context: context,
+                                      initial: sub,
+                                      onSave: (updated) {
+                                        setState(() {
+                                          _todoItems[index].subtasks[sIndex] = updated;
+                                        });
+                                        setDialogState(() {});
+                                        _saveTodoItems();
+                                      },
+                                    );
+                                  },
+                                ),
+                                IconButton(
+                                  icon: const Icon(Icons.delete_outline, color: Colors.red),
+                                  onPressed: () async {
+                                    final confirm = await showDialog<bool>(
+                                      context: context,
+                                      builder: (dctx) => AlertDialog(
+                                        title: const Text('Hapus Subtask'),
+                                        content: Text('Yakin ingin menghapus subtask "${sub.task}"?'),
+                                        actions: [
+                                          TextButton(
+                                            onPressed: () => Navigator.pop(dctx, false),
+                                            child: const Text('Batal'),
+                                          ),
+                                          ElevatedButton(
+                                            onPressed: () => Navigator.pop(dctx, true),
+                                            style: ElevatedButton.styleFrom(backgroundColor: Colors.red, foregroundColor: Colors.white),
+                                            child: const Text('Hapus'),
+                                          ),
+                                        ],
+                                      ),
+                                    );
+                                    if (confirm == true) {
+                                      setState(() {
+                                        _todoItems[index].subtasks.removeAt(sIndex);
+                                        if (_todoItems[index].subtasks.isEmpty) {
+                                          _todoItems[index].isExpanded = false; // UI tidy
+                                        }
+                                      });
+                                      setDialogState(() {});
+                                      _saveTodoItems();
+                                    }
+                                  },
+                                ),
+                              ],
+                            ),
+                          );
+                        },
+                      ),
                   ],
+                  ),
                 ),
               ),
               actions: [
@@ -636,7 +912,7 @@ class _TodoListScreenState extends State<TodoListScreen>
                               const SizedBox(width: 8),
                               Text(
                                 selectedDueDate != null 
-                                    ? '${selectedDueDate!.day}/${selectedDueDate!.month}/${selectedDueDate!.year}'
+                                    ? '${selectedDueDate!.day} ${_monthName(selectedDueDate!.month)} ${selectedDueDate!.year}'
                                     : 'Pilih tanggal deadline',
                               ),
                               const Spacer(),
@@ -999,16 +1275,7 @@ class _TodoListScreenState extends State<TodoListScreen>
                   const SizedBox(height: 4),
                   Row(
                     children: [
-                      Container(
-                        width: 12,
-                        height: 12,
-                        decoration: BoxDecoration(
-                          color: todoItem.priorityColor,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
                       if (hasActiveSubtasks) ...[
-                        const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
@@ -1026,7 +1293,7 @@ class _TodoListScreenState extends State<TodoListScreen>
                         ),
                       ],
                       if (hasOverdueSubtasks) ...[
-                        const SizedBox(width: 8),
+                        if (hasActiveSubtasks) const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(
@@ -1057,23 +1324,7 @@ class _TodoListScreenState extends State<TodoListScreen>
                       color: Colors.grey[600],
                     ),
                   ),
-                  Row(
-                    children: [
-                      Container(
-                        width: 8,
-                        height: 8,
-                        decoration: BoxDecoration(
-                          color: todoItem.priorityColor,
-                          shape: BoxShape.circle,
-                        ),
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Prioritas: ${todoItem.priority}',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600]),
-                      ),
-                    ],
-                  ),
+                  const SizedBox.shrink(),
                   if (todoItem.dueDate != null)
                     Row(
                       children: [
@@ -1111,6 +1362,18 @@ class _TodoListScreenState extends State<TodoListScreen>
                   mainAxisSize: MainAxisSize.min,
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
+                    Tooltip(
+                      message: 'Prioritas: ${todoItem.priority}',
+                      child: Container(
+                        width: 12,
+                        height: 12,
+                        decoration: BoxDecoration(
+                          color: todoItem.priorityColor,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
                     if (todoItem.subtasks.isNotEmpty || todoItem.notes.isNotEmpty)
                       SizedBox(
                         width: 32,
@@ -1304,11 +1567,15 @@ class _TodoListScreenState extends State<TodoListScreen>
   }
 
   String _formatDate(DateTime date) {
-    return '${date.day}/${date.month}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    final h = date.hour.toString().padLeft(2, '0');
+    final m = date.minute.toString().padLeft(2, '0');
+    return '${date.day} ${_monthName(date.month)} ${date.year} $h:$m';
   }
 
   String _formatDateTime(DateTime dateTime) {
-    return '${dateTime.day}/${dateTime.month} ${dateTime.hour.toString().padLeft(2, '0')}:${dateTime.minute.toString().padLeft(2, '0')}';
+    final h = dateTime.hour.toString().padLeft(2, '0');
+    final m = dateTime.minute.toString().padLeft(2, '0');
+    return '${dateTime.day} ${_monthName(dateTime.month)} $h:$m';
   }
 
   String _formatDuration(Duration duration) {

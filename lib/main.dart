@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'page/todolist.dart';
 import 'page/budgeting.dart';
@@ -8,6 +9,13 @@ import 'services/local_storage_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Prevent DevTools/DebugService from attempting to send a null log message on web
+  // which can cause: "Unsupported operation: Cannot send Null"
+  debugPrint = (String? message, {int? wrapWidth}) {
+    if (message == null) return;
+    // Forward synchronously without using print to avoid lints and null issues.
+    debugPrintSynchronously(message, wrapWidth: wrapWidth);
+  };
   
   try {
     // Initialize Firebase
@@ -398,7 +406,7 @@ class _MainScreenState extends State<MainScreen> with SingleTickerProviderStateM
               widget.isGuestMode 
                 ? 'Mode Tamu'
                 : 'Halo, ${_authService.userDisplayName}',
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
             ),
           ],
         ),
