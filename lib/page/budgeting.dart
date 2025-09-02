@@ -184,10 +184,12 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
 
   // Rekap state
   DateTime _recapMonth = DateTime(DateTime.now().year, DateTime.now().month);
+  DateTime? _recapSelectedDate; // if set, filter by this exact date
 
   // ----- Monthly Recap helpers (moved from model) -----
   void _changeRecapMonth(int diffMonths) {
     setState(() {
+      _recapSelectedDate = null; // exit day filter when changing month via arrows
       _recapMonth = DateTime(
         _recapMonth.year,
         _recapMonth.month + diffMonths,
@@ -196,6 +198,7 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
   }
 
   bool _isSameMonth(DateTime a, DateTime b) => a.year == b.year && a.month == b.month;
+  bool _isSameDay(DateTime a, DateTime b) => a.year == b.year && a.month == b.month && a.day == b.day;
 
   String _formatMonthYear(DateTime d) {
     const months = [
@@ -204,119 +207,42 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
     return '${months[d.month - 1]} ${d.year}';
   }
 
-  // Month-Year Picker dialog for quick jump
-  void _showMonthYearPicker() {
-    final now = DateTime.now();
-    final years = <int>{now.year}
-      ..addAll(_transactions.map((t) => t.date.year))
-      ..addAll(_savingsTransactions.map((t) => t.date.year))
-      ..addAll(_savingsPlans.map((p) => p.targetDate.year));
-    final sortedYears = years.toList()..sort();
-    if (!sortedYears.contains(now.year)) sortedYears.add(now.year);
-    sortedYears.sort();
-
-    int tempYear = _recapMonth.year;
-    int tempMonth = _recapMonth.month; // 1..12
-
-    showDialog(
-      context: context,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setLocal) {
-            return AlertDialog(
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-              title: const Text('Pilih Bulan & Tahun'),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  // Year selector
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      IconButton(
-                        onPressed: () => setLocal(() => tempYear--),
-                        icon: const Icon(Icons.chevron_left),
-                      ),
-                      DropdownButton<int>(
-                        value: tempYear,
-                        onChanged: (v) => setLocal(() => tempYear = v ?? tempYear),
-                        items: sortedYears
-                            .map((y) => DropdownMenuItem(value: y, child: Text('$y')))
-                            .toList(),
-                      ),
-                      IconButton(
-                        onPressed: () => setLocal(() => tempYear++),
-                        icon: const Icon(Icons.chevron_right),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  // Months grid
-                  GridView.builder(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 3,
-                      mainAxisSpacing: 8,
-                      crossAxisSpacing: 8,
-                      childAspectRatio: 2.6,
-                    ),
-                    itemCount: 12,
-                    itemBuilder: (context, index) {
-                      const months = [
-                        'Jan','Feb','Mar','Apr','Mei','Jun','Jul','Agu','Sep','Okt','Nov','Des'
-                      ];
-                      final m = index + 1;
-                      final selected = m == tempMonth;
-                      final color = Theme.of(context).primaryColor;
-                      return InkWell(
-                        onTap: () => setLocal(() => tempMonth = m),
-                        borderRadius: BorderRadius.circular(8),
-                        child: Container(
-                          alignment: Alignment.center,
-                          decoration: BoxDecoration(
-                            color: selected ? color.withValues(alpha: 0.15) : Colors.grey[100],
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: selected ? color : Colors.grey[300]!),
-                          ),
-                          child: Text(
-                            months[index],
-                            style: TextStyle(
-                              fontWeight: FontWeight.w600,
-                              color: selected ? color : Colors.grey[800],
-                            ),
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('Batal'),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    setState(() {
-                      _recapMonth = DateTime(tempYear, tempMonth);
-                    });
-                    Navigator.pop(context);
-                  },
-                  child: const Text('Pilih'),
-                ),
-              ],
-            );
-          },
-        );
-      },
-    );
+  String _formatFullDate(DateTime d) {
+    const months = [
+      'Januari','Februari','Maret','April','Mei','Juni','Juli','Agustus','September','Oktober','November','Desember'
+    ];
+    return '${d.day} ${months[d.month - 1]} ${d.year}';
   }
 
+  Future<void> _pickDate() async {
+    final now = DateTime.now();
+    final initial = _recapSelectedDate ?? DateTime(_recapMonth.year, _recapMonth.month, now.day);
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: initial,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100, 12, 31),
+      helpText: 'Pilih Tanggal Rekap',
+      cancelText: 'Batal',
+      confirmText: 'Pilih',
+    );
+    if (picked != null) {
+      setState(() {
+        _recapSelectedDate = picked;
+        _recapMonth = DateTime(picked.year, picked.month);
+      });
+    }
+  }
+
+  // Month-Year Picker dialog removed; replaced by PopupMenuButton in header (no overlay)
+
   Widget _buildMonthlyRecap() {
-    final monthTx = _transactions.where((t) => _isSameMonth(t.date, _recapMonth)).toList()
+    final monthTx = _transactions.where((t) {
+      if (_recapSelectedDate != null) {
+        return _isSameDay(t.date, _recapSelectedDate!);
+      }
+      return _isSameMonth(t.date, _recapMonth);
+    }).toList()
       ..sort((a, b) => b.date.compareTo(a.date));
 
     double income = 0, expense = 0;
@@ -345,18 +271,29 @@ class _BudgetScreenState extends State<BudgetScreen> with TickerProviderStateMix
               ),
               Expanded(
                 child: Center(
-                  child: InkWell(
-                    onTap: _showMonthYearPicker,
-                    borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          _formatMonthYear(_recapMonth),
+                          _recapSelectedDate != null
+                              ? _formatFullDate(_recapSelectedDate!)
+                              : _formatMonthYear(_recapMonth),
                           style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                         ),
                         const SizedBox(width: 6),
-                        const Icon(Icons.arrow_drop_down),
+                        InkWell(
+                          onTap: _pickDate,
+                          borderRadius: BorderRadius.circular(6),
+                          child: const Padding(
+                            padding: EdgeInsets.all(4.0),
+                            child: Icon(Icons.calendar_month),
+                          ),
+                        ),
                       ],
                     ),
                   ),

@@ -166,30 +166,12 @@ class _LoginScreenState extends State<LoginScreen> {
   Widget build(BuildContext context) {
     return PopScope(
       canPop: false,
-      onPopInvokedWithResult: (didPop, result) async {
-        if (!didPop) {
-          // Set guest mode and navigate back to main screen
-          await LocalStorageService.instance.setGuestMode(true);
-          if (context.mounted) {
-            Navigator.of(context).pushReplacementNamed('/');
-          }
-        }
-      },
       child: Scaffold(
       backgroundColor: Colors.grey[50],
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.black87),
-          onPressed: () async {
-            // Set guest mode and navigate back to main screen
-            await LocalStorageService.instance.setGuestMode(true);
-            if (context.mounted) {
-              Navigator.of(context).pushReplacementNamed('/');
-            }
-          },
-        ),
+        automaticallyImplyLeading: false,
         title: const Text(
           'Masuk',
           style: TextStyle(color: Colors.black87, fontWeight: FontWeight.bold),
@@ -399,6 +381,25 @@ class _LoginScreenState extends State<LoginScreen> {
                                 fontSize: 16,
                                 fontWeight: FontWeight.w500,
                                 color: Colors.black87,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          // Continue as guest
+                          TextButton(
+                            onPressed: _isLoading
+                                ? null
+                                : () async {
+                                    await LocalStorageService.instance.setGuestMode(true);
+                                    if (context.mounted) {
+                                      Navigator.of(context).pushReplacementNamed('/');
+                                    }
+                                  },
+                            child: Text(
+                              'Lanjut tanpa login',
+                              style: TextStyle(
+                                color: Theme.of(context).primaryColor,
+                                fontWeight: FontWeight.bold,
                               ),
                             ),
                           ),
