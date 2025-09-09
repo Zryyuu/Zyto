@@ -398,10 +398,6 @@ class _MainScreenState extends State<MainScreen> with SingleTickerProviderStateM
         centerTitle: true,
         title: Column(
           children: [
-            const Text(
-              'Task & Budget Manager',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-            ),
             Text(
               widget.isGuestMode 
                 ? 'Mode Tamu'
